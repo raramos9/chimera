@@ -9,6 +9,7 @@ users:
     lock_passwd: true
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrotfaJoO9CHVMrDKobM82hmNsCrrGsx/WfZg0kkPeV laptop
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA59oRQ1l1QV0EVN2tCkxH2VY3Gqw0DdmQ9s1GGjG8gj phone
 
 disable_root: true
 ssh_pwauth: false
