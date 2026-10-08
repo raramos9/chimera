@@ -1,0 +1,41 @@
+#cloud-config
+
+users:
+  - name: andre
+    uid: 1000
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrotfaJoO9CHVMrDKobM82hmNsCrrGsx/WfZg0kkPeV rramos99@berkeley.edu
+
+disable_root: true
+ssh_pwauth: false
+ssh_deletekeys: false
+
+bootcmd:
+  - |
+    set -eu
+    dev=/dev/disk/by-id/scsi-0HC_Volume_107072286
+    keys=/home/.chimera/ssh-host-keys
+
+    for _ in $(seq 60); do [ -e "$dev" ] && break; sleep 1; done
+    [ -e "$dev" ] || { echo "chimera: volume $dev never appeared" >&2; exit 1; }
+
+    if ! mountpoint -q /home; then
+      rc=0; blkid -p "$dev" >/dev/null || rc=$?
+      if [ "$rc" -eq 2 ]; then mkfs.ext4 "$dev"; fi
+      mount "$dev" /home
+    fi
+
+    rm -f /etc/ssh/ssh_host_*
+    if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
+
+runcmd:
+  - |
+    keys=/home/.chimera/ssh-host-keys
+    if [ ! -d "$keys" ]; then
+      install -d -m 700 "$keys"
+      cp -p /etc/ssh/ssh_host_* "$keys"/
+    fi
