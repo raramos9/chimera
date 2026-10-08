@@ -33,6 +33,47 @@ bootcmd:
     rm -f /etc/ssh/ssh_host_*
     if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
 
+write_files:
+  - path: /usr/local/bin/chimera-idle-check
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      dir=/run/chimera-idle
+      mkdir -p "$dir"
+      minutes=30
+      if [ -e "$dir/minutes" ]; then minutes=$(cat "$dir/minutes"); fi
+      if [ ! -e "$dir/last-busy" ] || [ -e /home/andre/.keep-awake ] \
+        || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null; then
+        touch "$dir/last-busy"
+        exit 0
+      fi
+      if [ $(( $(date +%s) - $(stat -c %Y "$dir/last-busy") )) -ge $(( minutes * 60 )) ]; then
+        echo "chimera: idle for $minutes minutes, powering off"
+        systemctl poweroff
+      fi
+  - path: /etc/systemd/system/chimera-idle.service
+    content: |
+      [Unit]
+      Description=Power off when nobody has been connected for a while
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/chimera-idle-check
+  - path: /etc/systemd/system/chimera-idle.timer
+    content: |
+      [Timer]
+      OnBootSec=1min
+      OnUnitActiveSec=1min
+      AccuracySec=10s
+
+      [Install]
+      WantedBy=timers.target
+  - path: /etc/ssh/sshd_config.d/60-chimera.conf
+    content: |
+      ClientAliveInterval 60
+      ClientAliveCountMax 3
+
 runcmd:
   - |
     keys=/home/.chimera/ssh-host-keys
@@ -40,3 +81,6 @@ runcmd:
       install -d -m 700 "$keys"
       cp -p /etc/ssh/ssh_host_* "$keys"/
     fi
+  - systemctl daemon-reload
+  - systemctl enable --now chimera-idle.timer
+  - systemctl try-reload-or-restart ssh
