@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+name=chimera
+server_type=cpx11
+location=hil
+image=ubuntu-24.04
+ssh_key=laptop
+primary_ip=chimera-ip
+volume=chimera-home
+user=andre
+cloud_init="$(dirname "$0")/../cloud-init.yaml"
+
+server_status() {
+  hcloud server list -o json | jq -r --arg n "$name" '(. // [])[] | select(.name == $n) | .status'
+}
+
+address() {
+  hcloud primary-ip describe "$primary_ip" -o json | jq -r .ip
+}
+
+ssh_answers() {
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$user@$1" true 2>/dev/null
+}
+
+cmd_status() {
+  local status
+  status=$(server_status)
+  case "$status" in
+    "") echo asleep ;;
+    running) if ssh_answers "$(address)"; then echo awake; else echo waking; fi ;;
+    initializing|starting) echo waking ;;
+    stopping|off|deleting) echo going-to-sleep ;;
+    *) echo "unknown ($status)" ;;
+  esac
+}
+
+cmd_sleep() {
+  local status
+  status=$(server_status)
+  if [ "$status" = running ]; then
+    hcloud server shutdown "$name"
+  fi
+  for _ in $(seq 60); do
+    status=$(server_status)
+    case "$status" in
+      "") echo asleep; return ;;
+      off) hcloud server delete "$name"; echo asleep; return ;;
+    esac
+    sleep 2
+  done
+  echo "The server didn't shut down within 2 minutes. Run 'chimera sleep' again, or force it off with 'hcloud server poweroff $name'." >&2
+  exit 1
+}
+
+cmd_wake() {
+  local status ip
+  status=$(server_status)
+  case "$status" in
+    "")
+      hcloud server create --name "$name" --type "$server_type" --image "$image" \
+        --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
+        --volume "$volume" --user-data-from-file "$cloud_init"
+      ;;
+    off) hcloud server poweron "$name" ;;
+    stopping|deleting)
+      echo "The computer is still going to sleep. Run 'chimera wake' again in a minute." >&2
+      exit 1
+      ;;
+  esac
+  ip=$(address)
+  echo "Waiting for SSH on $ip..."
+  for _ in $(seq 60); do
+    if ssh_answers "$ip"; then echo awake; return; fi
+    sleep 3
+  done
+  echo "SSH didn't answer within 3 minutes. Run 'ssh $user@$ip' to see the error." >&2
+  exit 1
+}
+
+case "${1:-}" in
+  sleep) cmd_sleep ;;
+  wake) cmd_wake ;;
+  status) cmd_status ;;
+  *) echo "usage: chimera sleep|wake|status" >&2; exit 2 ;;
+esac
