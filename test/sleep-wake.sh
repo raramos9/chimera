@@ -12,7 +12,7 @@ ip=$(hcloud server ip chimera)
 ip_before=$ip
 key_before=$(host_key "$ip")
 token="sleep-wake-$(date +%s)-$RANDOM"
-remote "echo $token > ~/.sleep-wake-test"
+remote "echo $token > .sleep-wake-test"
 
 "$chimera" sleep
 [ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
@@ -21,7 +21,7 @@ remote "echo $token > ~/.sleep-wake-test"
 ip=$(hcloud server ip chimera)
 [ "$ip" = "$ip_before" ] || fail "address changed from $ip_before to $ip"
 [ "$(host_key "$ip")" = "$key_before" ] || fail "host key changed"
-[ "$(remote cat ~/.sleep-wake-test)" = "$token" ] || fail "file did not survive sleep"
-remote rm ~/.sleep-wake-test
+[ "$(remote cat .sleep-wake-test)" = "$token" ] || fail "file did not survive sleep"
+remote rm .sleep-wake-test
 
 echo "PASS: file, host key, and address survived sleep and wake"
