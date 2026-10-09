@@ -1,0 +1,9 @@
+name = "chimera-cleanup"
+main = "worker.js"
+compatibility_date = "2025-10-01"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[observability]
+enabled = true

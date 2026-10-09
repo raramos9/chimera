@@ -45,7 +45,7 @@ cmd_sleep() {
     status=$(server_status)
     case "$status" in
       "") echo asleep; return ;;
-      off) hcloud server delete "$name"; echo asleep; return ;;
+      off) hcloud server delete "$name" || true ;;
     esac
     sleep 2
   done
@@ -56,13 +56,16 @@ cmd_sleep() {
 cmd_wake() {
   local status ip
   status=$(server_status)
+  if [ "$status" = off ]; then
+    hcloud server delete "$name" || true
+    status=$(server_status)
+  fi
   case "$status" in
     "")
       hcloud server create --name "$name" --type "$server_type" --image "$image" \
         --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
         --volume "$volume" --user-data-from-file "$cloud_init"
       ;;
-    off) hcloud server poweron "$name" ;;
     stopping|deleting)
       echo "The computer is still going to sleep. Run 'chimera wake' again in a minute." >&2
       exit 1
