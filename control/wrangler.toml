@@ -1,4 +1,4 @@
-name = "chimera-cleanup"
+name = "chimera-control"
 main = "worker.js"
 compatibility_date = "2025-10-01"
 
@@ -7,3 +7,8 @@ crons = ["*/5 * * * *"]
 
 [observability]
 enabled = true
+
+[[rules]]
+type = "Text"
+globs = ["**/*.yaml"]
+fallthrough = false
