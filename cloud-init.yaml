@@ -29,12 +29,18 @@ bootcmd:
       if [ "$rc" -eq 2 ]; then mkfs.ext4 "$dev"; fi
       mount "$dev" /home
     fi
+    resize2fs "$dev" || echo "chimera: couldn't grow /home to the volume size" >&2
 
     rm -f /etc/ssh/ssh_host_*
     if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
 
     install -d -m 700 /home/.chimera/tailscale /var/lib/tailscale
     mountpoint -q /var/lib/tailscale || mount --bind /home/.chimera/tailscale /var/lib/tailscale
+
+    install -d -m 710 /home/.chimera/docker /var/lib/docker
+    mountpoint -q /var/lib/docker || mount --bind /home/.chimera/docker /var/lib/docker
+    install -d -m 711 /home/.chimera/containerd /var/lib/containerd
+    mountpoint -q /var/lib/containerd || mount --bind /home/.chimera/containerd /var/lib/containerd
 
 write_files:
   - path: /usr/local/bin/chimera-idle-check
@@ -88,3 +94,5 @@ runcmd:
   - systemctl enable --now chimera-idle.timer
   - systemctl try-reload-or-restart ssh
   - curl -fsSL https://tailscale.com/install.sh | sh
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker andre
