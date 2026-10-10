@@ -5,6 +5,9 @@ compatibility_date = "2025-10-01"
 [triggers]
 crons = ["*/5 * * * *"]
 
+[vars]
+MAX_AWAKE_MINUTES = "1440"
+
 [observability]
 enabled = true
 
