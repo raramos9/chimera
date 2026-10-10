@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "andre@$ip" "$@"; }
+remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes andre@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 
 [ "$(hcloud volume describe chimera-home -o json | jq -r .protection.delete)" = true ] \
@@ -13,7 +13,6 @@ provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.na
   || fail "primary IP chimera-ip is not delete-protected"
 
 "$chimera" wake
-ip=$(hcloud server ip chimera)
 
 remote sudo systemctl poweroff || true
 

@@ -7,6 +7,7 @@ location=hil
 image=ubuntu-24.04
 ssh_key=laptop
 primary_ip=chimera-ip
+firewall=chimera-firewall
 volume=chimera-home
 user=andre
 cloud_init="$(dirname "$0")/../cloud-init.yaml"
@@ -15,12 +16,8 @@ server_status() {
   hcloud server list -o json | jq -r --arg n "$name" '(. // [])[] | select(.name == $n) | .status'
 }
 
-address() {
-  hcloud primary-ip describe "$primary_ip" -o json | jq -r .ip
-}
-
 ssh_answers() {
-  ssh -o BatchMode=yes -o ConnectTimeout=5 "$user@$1" true 2>/dev/null
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$user@$name" true 2>/dev/null
 }
 
 cmd_status() {
@@ -28,7 +25,7 @@ cmd_status() {
   status=$(server_status)
   case "$status" in
     "") echo asleep ;;
-    running) if ssh_answers "$(address)"; then echo awake; else echo waking; fi ;;
+    running) if ssh_answers; then echo awake; else echo waking; fi ;;
     initializing|starting) echo waking ;;
     stopping|off|deleting) echo going-to-sleep ;;
     *) echo "unknown ($status)" ;;
@@ -54,7 +51,7 @@ cmd_sleep() {
 }
 
 cmd_wake() {
-  local status ip
+  local status
   status=$(server_status)
   if [ "$status" = off ]; then
     hcloud server delete "$name" || true
@@ -63,7 +60,7 @@ cmd_wake() {
   case "$status" in
     "")
       hcloud server create --name "$name" --type "$server_type" --image "$image" \
-        --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
+        --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" --firewall "$firewall" \
         --volume "$volume" --user-data-from-file "$cloud_init"
       ;;
     stopping|deleting)
@@ -71,13 +68,12 @@ cmd_wake() {
       exit 1
       ;;
   esac
-  ip=$(address)
-  echo "Waiting for SSH on $ip..."
+  echo "Waiting for SSH on $name over Tailscale..."
   for _ in $(seq 60); do
-    if ssh_answers "$ip"; then echo awake; return; fi
+    if ssh_answers; then echo awake; return; fi
     sleep 3
   done
-  echo "SSH didn't answer within 3 minutes. Run 'ssh $user@$ip' to see the error." >&2
+  echo "SSH didn't answer within 3 minutes. Run 'ssh $user@$name' to see the error." >&2
   exit 1
 }
 

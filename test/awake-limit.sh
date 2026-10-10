@@ -7,7 +7,7 @@ limit=10
 force_after=$((limit + 15))
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "andre@$ip" "$@"; }
+remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes andre@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 deploy() { (cd "$root/control" && npx wrangler deploy "$@" >/dev/null); }
 
@@ -23,7 +23,6 @@ deploy --var "MAX_AWAKE_MINUTES:$limit"
 "$chimera" sleep
 woke=$(date +%s)
 "$chimera" wake
-ip=$(hcloud server ip chimera)
 
 remote "sudo mkdir -p /run/chimera-idle && echo 1000 | sudo tee /run/chimera-idle/minutes >/dev/null"
 
