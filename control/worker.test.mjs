@@ -161,6 +161,7 @@ await runWake("asleep computer is created", [], () => wake("pw"), async (res) =>
     volumes: [107072286],
     automount: false,
     public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: 154132581 },
+    firewalls: [{ firewall: 11770509 }],
     user_data: fs.readFileSync(fileURLToPath(new URL("../cloud-init.yaml", import.meta.url)), "utf8"),
   });
 });

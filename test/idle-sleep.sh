@@ -4,18 +4,18 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "andre@$ip" "$@"; }
+remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes andre@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 
-ip=
+woke=
 cleanup() {
-  if [ "$?" -ne 0 ] && [ -n "$ip" ]; then remote rm -f .keep-awake 2>/dev/null || true; fi
+  if [ "$?" -ne 0 ] && [ -n "$woke" ]; then remote rm -f .keep-awake 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 
 "$chimera" sleep
 "$chimera" wake
-ip=$(hcloud server ip chimera)
+woke=1
 
 sshd_config=$(remote sudo sshd -T)
 echo "$sshd_config" | grep -qx 'clientaliveinterval 60' || fail "dead-connection setting missing"

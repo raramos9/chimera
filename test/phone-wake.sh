@@ -30,13 +30,14 @@ wake "not-the-password"
 wake "$token"
 [ "$status" = 202 ] || fail "waking returned $status: $body"
 
-ip=$(hcloud primary-ip describe chimera-ip -o json | jq -r .ip)
 answered=
 for _ in $(seq 36); do
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "andre@$ip" true 2>/dev/null; then answered=1; break; fi
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera true 2>/dev/null; then answered=1; break; fi
   sleep 5
 done
-[ -n "$answered" ] || fail "SSH didn't answer within 3 minutes of waking"
+[ -n "$answered" ] || fail "SSH over Tailscale didn't answer within 3 minutes of waking"
+nc -z -G 5 chimera 22 2>/dev/null || fail "port check can't reach SSH over Tailscale"
+! nc -z -G 5 "$(hcloud server ip chimera)" 22 2>/dev/null || fail "public SSH is open on the server the Worker created"
 
 wake "$token"
 [ "$status" = 200 ] && [ "$body" = "Already awake." ] || fail "second wake returned $status: $body"
@@ -44,4 +45,4 @@ wake "$token"
 "$chimera" sleep
 [ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleeping"
 
-echo "PASS: phone wake refused a wrong password, woke the computer, and left a running one alone"
+echo "PASS: phone wake refused a wrong password, woke the computer behind the firewall, and left a running one alone"

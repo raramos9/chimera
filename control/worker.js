@@ -4,6 +4,7 @@ const name = "chimera";
 const api = "https://api.hetzner.cloud/v1";
 const volumeId = 107072286; // chimera-home
 const primaryIpId = 154132581; // chimera-ip
+const firewallId = 11770509; // chimera-firewall
 
 const wakeByStatus = {
   none: "create",
@@ -63,6 +64,7 @@ function createServer(env) {
     volumes: [volumeId],
     automount: false,
     public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: primaryIpId },
+    firewalls: [{ firewall: firewallId }],
     user_data: cloudInit,
   });
 }
