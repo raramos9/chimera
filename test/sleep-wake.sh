@@ -5,7 +5,7 @@ chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "andre@$ip" "$@"; }
-host_key() { ssh-keyscan -t ed25519 "$1" 2>/dev/null; }
+host_key() { ssh-keyscan -t ed25519 "$1" 2>/dev/null | awk '!/^#/ { print $2, $3 }'; }
 
 "$chimera" wake
 ip=$(hcloud server ip chimera)
