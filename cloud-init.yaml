@@ -33,6 +33,9 @@ bootcmd:
     rm -f /etc/ssh/ssh_host_*
     if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
 
+    install -d -m 700 /home/.chimera/tailscale /var/lib/tailscale
+    mountpoint -q /var/lib/tailscale || mount --bind /home/.chimera/tailscale /var/lib/tailscale
+
 write_files:
   - path: /usr/local/bin/chimera-idle-check
     permissions: "0755"
@@ -84,3 +87,4 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now chimera-idle.timer
   - systemctl try-reload-or-restart ssh
+  - curl -fsSL https://tailscale.com/install.sh | sh
