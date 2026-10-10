@@ -13,7 +13,6 @@ ip_before=$(tailnet_ip)
 "$chimera" sleep
 start=$(date +%s)
 "$chimera" wake
-public_seconds=$(( $(date +%s) - start ))
 
 echo "Waiting for SSH over Tailscale..."
 for _ in $(seq 40); do
@@ -21,13 +20,13 @@ for _ in $(seq 40); do
   sleep 3
 done
 private true || fail "SSH to andre@chimera over Tailscale didn't answer within 2 minutes of waking"
-private_seconds=$(( $(date +%s) - start ))
+seconds=$(( $(date +%s) - start ))
 
 [ "$(tailnet_ip)" = "$ip_before" ] || fail "tailnet address changed from $ip_before to $(tailnet_ip), the server logged in as a new device"
 nc -z -G 5 chimera 22 2>/dev/null || fail "port check can't reach SSH over Tailscale"
 ! nc -z -G 5 "$(hcloud server ip chimera)" 22 2>/dev/null || fail "public SSH is open"
 
 tailscale status | grep chimera
-echo "Wake timing: public SSH after ${public_seconds}s, Tailscale SSH after ${private_seconds}s"
+echo "Wake timing: SSH over Tailscale answered after ${seconds}s"
 private "sudo cloud-init analyze blame | head -5"
 echo "PASS: after sleep and wake the server rejoined the tailnet as the same device, reachable as andre@chimera and not on the public address"
