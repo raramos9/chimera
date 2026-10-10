@@ -34,22 +34,57 @@ const { default: worker } = await import("./worker.js");
 async function run(label, servers, check) {
   calls.length = 0;
   list = () => new Response(JSON.stringify({ servers }));
-  await worker.scheduled({}, { HCLOUD_TOKEN: "t" });
+  await worker.scheduled({}, { HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440" });
   check();
   console.log(`PASS: ${label}`);
 }
 
 const deletes = () => calls.filter((c) => c.method === "DELETE");
+const posts = () => calls.filter((c) => c.method === "POST");
+const server = (status, minutesAgo) =>
+  ({ id: 42, name: "chimera", status, created: new Date(Date.now() - minutesAgo * 60000).toISOString() });
 
-await run("powered-off server is deleted", [{ id: 42, name: "chimera", status: "off" }], () => {
+await run("powered-off server is deleted", [server("off", 60)], () => {
   assert.equal(calls[0].url, "https://api.hetzner.cloud/v1/servers?name=chimera");
   assert.equal(deletes().length, 1);
   assert.equal(deletes()[0].url, "https://api.hetzner.cloud/v1/servers/42");
   for (const c of calls) assert.equal(c.headers.Authorization, "Bearer t");
 });
 
-await run("running server is left alone", [{ id: 42, name: "chimera", status: "running" }], () => {
+await run("running server is left alone", [server("running", 60)], () => {
   assert.equal(deletes().length, 0);
+  assert.equal(posts().length, 0);
+});
+
+await run("server off within 5 minutes of creation is left alone", [server("off", 2)], () => {
+  assert.equal(deletes().length, 0);
+});
+
+await run("server awake 24 hours is shut down", [server("running", 1441)], () => {
+  assert.equal(deletes().length, 0);
+  assert.deepEqual(posts().map((c) => c.url), ["https://api.hetzner.cloud/v1/servers/42/actions/shutdown"]);
+});
+
+await run("server still awake 15 minutes after the limit is forced off", [server("running", 1456)], () => {
+  assert.deepEqual(posts().map((c) => c.url), ["https://api.hetzner.cloud/v1/servers/42/actions/poweroff"]);
+});
+
+await run("server stuck starting past the limit is forced off", [server("starting", 1456)], () => {
+  assert.deepEqual(posts().map((c) => c.url), ["https://api.hetzner.cloud/v1/servers/42/actions/poweroff"]);
+});
+
+await run("server stuck starting before the force-off point is left alone", [server("starting", 1441)], () => {
+  assert.equal(posts().length, 0);
+});
+
+await run("server that went off past the limit is deleted", [server("off", 1456)], () => {
+  assert.equal(deletes().length, 1);
+  assert.equal(posts().length, 0);
+});
+
+await run("server already deleting is left alone", [server("deleting", 1500)], () => {
+  assert.equal(deletes().length, 0);
+  assert.equal(posts().length, 0);
 });
 
 await run("no server is a no-op", [], () => {
@@ -58,16 +93,23 @@ await run("no server is a no-op", [], () => {
 
 calls.length = 0;
 list = () => new Response("unauthorized", { status: 401 });
-await assert.rejects(worker.scheduled({}, { HCLOUD_TOKEN: "t" }), /GET \/servers\?name=chimera: 401 unauthorized/);
+await assert.rejects(
+  worker.scheduled({}, { HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440" }),
+  /GET \/servers\?name=chimera: 401 unauthorized/,
+);
 assert.equal(deletes().length, 0);
 console.log("PASS: list failure rejects");
+
+calls.length = 0;
+await assert.rejects(worker.scheduled({}, { HCLOUD_TOKEN: "t" }), /MAX_AWAKE_MINUTES must be a positive number/);
+assert.equal(calls.length, 0);
+console.log("PASS: missing limit rejects");
 
 const wake = (token, { method = "POST", path = "/wake", header = `Bearer ${token}` } = {}) =>
   worker.fetch(
     new Request(`https://control.example${path}`, { method, headers: header ? { Authorization: header } : {} }),
     { HCLOUD_TOKEN: "t", WAKE_TOKEN: token },
   );
-const posts = () => calls.filter((c) => c.method === "POST");
 
 async function runWake(label, servers, request, check) {
   calls.length = 0;

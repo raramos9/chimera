@@ -23,6 +23,24 @@ const replies = {
   busy: [409, "Going to sleep. Try again in a minute."],
 };
 
+// A brand-new server can report "off" for a moment before it starts.
+const graceMinutes = 5;
+const forceOffAfterMinutes = 15;
+
+function sweepAction(status, minutes, maxAwake) {
+  if (minutes < graceMinutes) return null;
+  if (status === "off") return "delete";
+  if (minutes >= maxAwake + forceOffAfterMinutes && status !== "deleting") return "poweroff";
+  if (minutes >= maxAwake && status === "running") return "shutdown";
+  return null;
+}
+
+const sweepRequests = {
+  delete: (id) => ["DELETE", `/servers/${id}`],
+  shutdown: (id) => ["POST", `/servers/${id}/actions/shutdown`],
+  poweroff: (id) => ["POST", `/servers/${id}/actions/poweroff`],
+};
+
 async function hetzner(env, method, path, body) {
   const headers = { Authorization: `Bearer ${env.HCLOUD_TOKEN}` };
   if (body) headers["Content-Type"] = "application/json";
@@ -62,11 +80,15 @@ async function deleteAndWait(env, id) {
 
 export default {
   async scheduled(event, env) {
+    const maxAwake = Number(env.MAX_AWAKE_MINUTES);
+    if (!(maxAwake > 0)) throw new Error(`MAX_AWAKE_MINUTES must be a positive number, got ${env.MAX_AWAKE_MINUTES}`);
     const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
     for (const server of servers) {
-      if (server.status !== "off") continue;
-      console.log(`deleting ${server.name} (${server.id}), powered off`);
-      await hetzner(env, "DELETE", `/servers/${server.id}`);
+      const minutes = (Date.now() - Date.parse(server.created)) / 60000;
+      const action = sweepAction(server.status, minutes, maxAwake);
+      if (!action) continue;
+      console.log(`${action} ${server.name} (${server.id}), ${server.status} for ${Math.floor(minutes)} min`);
+      await hetzner(env, ...sweepRequests[action](server.id));
     }
   },
 
