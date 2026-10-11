@@ -57,7 +57,8 @@ cmd_sleep() {
 }
 
 newest_image() {
-  hcloud image list --type snapshot --selector "$image_label" --sort created:desc -o json | jq -r '(. // [])[0].id // empty'
+  hcloud image list --type snapshot --selector "$image_label" --sort created:desc -o json \
+    | jq -r '[(. // [])[] | select(.status == "available")][0].id // empty'
 }
 
 create_server() {
@@ -166,35 +167,19 @@ cmd_restore() {
 }
 
 cmd_build_image() {
-  local build=chimera-image-build ip
-  trap "hcloud server delete $build >/dev/null 2>&1 || echo 'Delete the build server with: hcloud server delete $build' >&2" EXIT
-  echo "Building a fresh server to install everything on..."
-  hcloud server create --name "$build" --type "$server_type" --image "$base_image" \
-    --location "$location" --ssh-key "$ssh_key" --user-data-from-file "$image_init" >/dev/null
-  ip=$(hcloud server ip "$build")
-  # Nothing secret is sent, so a fresh server's unknown host key is accepted.
-  local remote=(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no
-    -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "root@$ip")
-  for _ in $(seq 60); do "${remote[@]}" true 2>/dev/null && break; sleep 3; done
-  echo "Installing Tailscale, Docker, restic and updates..."
-  if ! "${remote[@]}" "cloud-init status --wait >/dev/null"; then
-    "${remote[@]}" "tail -30 /var/log/cloud-init-output.log" >&2 || true
-    echo "Installing failed. Not saving an image." >&2
-    exit 1
+  local build=chimera-image-build before
+  before=$(newest_image)
+  if [ -z "$(hcloud server list -o json | jq -r --arg n "$build" '(. // [])[] | select(.name == $n) | .name')" ]; then
+    hcloud server create --name "$build" --type "$server_type" --image "$base_image" --location "$location" \
+      --ssh-key "$ssh_key" --firewall "$firewall" --user-data-from-file "$image_init" >/dev/null
   fi
-  echo "Wiping what makes it one particular machine..."
-  "${remote[@]}" "systemctl stop tailscaled docker docker.socket containerd \
-    && rm -rf /var/lib/tailscale/* /var/lib/docker/* /var/lib/containerd/* /etc/ssh/ssh_host_* \
-    && cloud-init clean --logs --machine-id && sync && systemctl poweroff --no-block"
-  for _ in $(seq 60); do [ "$(hcloud server describe "$build" -o json | jq -r .status)" = off ] && break; sleep 2; done
-  [ "$(hcloud server describe "$build" -o json | jq -r .status)" = off ] || { echo "The build server didn't power off. Not saving an image." >&2; exit 1; }
-  echo "Saving the image..."
-  hcloud server create-image "$build" --type snapshot --label "$image_label" --description "chimera $(date -u +%F)"
-  local old
-  for old in $(hcloud image list --type snapshot --selector "$image_label" --sort created:desc -o json | jq -r '.[2:][].id'); do
-    hcloud image delete "$old"
+  echo "Building. The Worker saves the image once the build server powers off, usually within 10 minutes..."
+  for _ in $(seq 120); do
+    if [ "$(newest_image)" != "$before" ]; then echo "Image ready. The next wake uses it."; return; fi
+    sleep 10
   done
-  echo "Image ready. The next wake uses it."
+  echo "No new image after 20 minutes. Check the Worker's logs with 'npx wrangler tail' in control/." >&2
+  exit 1
 }
 
 case "${1:-}" in
