@@ -152,7 +152,7 @@ await runWake("unset secret does not accept 'Bearer undefined'", [], () => wake(
 
 await runWake("asleep computer is created", [], () => wake("pw"), async (res) => {
   assert.equal(res.status, 202);
-  assert.equal(await res.text(), "Waking up. Ready in about a minute.");
+  assert.equal(await res.text(), "Waking up. Ready in about 30 seconds.");
   assert.equal(posts().length, 1);
   assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/volumes?name=chimera-home"));
   assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/images?type=snapshot&label_selector=chimera%3Dbase&sort=created:desc"));

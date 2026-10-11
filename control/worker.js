@@ -18,8 +18,8 @@ const wakeByStatus = {
 };
 
 const replies = {
-  create: [202, "Waking up. Ready in about a minute."],
-  replace: [202, "Waking up. Ready in about a minute."],
+  create: [202, "Waking up. Ready in about 30 seconds."],
+  replace: [202, "Waking up. Ready in about 30 seconds."],
   awake: [200, "Already awake."],
   waking: [200, "Already waking up."],
   busy: [409, "Going to sleep. Try again in a minute."],
