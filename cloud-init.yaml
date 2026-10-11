@@ -53,7 +53,8 @@ write_files:
       minutes=30
       if [ -e "$dir/minutes" ]; then minutes=$(cat "$dir/minutes"); fi
       if [ ! -e "$dir/last-busy" ] || [ -e /home/andre/.keep-awake ] \
-        || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null; then
+        || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
+        || ! flock -n -x "$dir/awake.lock" true; then
         touch "$dir/last-busy"
         exit 0
       fi
@@ -61,6 +62,11 @@ write_files:
         echo "chimera: idle for $minutes minutes, powering off"
         systemctl poweroff
       fi
+  - path: /usr/local/bin/awake
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      exec flock -o -s /run/chimera-idle/awake.lock "$@"
   - path: /etc/systemd/system/chimera-idle.service
     content: |
       [Unit]
@@ -90,6 +96,7 @@ runcmd:
       install -d -m 700 "$keys"
       cp -p /etc/ssh/ssh_host_* "$keys"/
     fi
+  - install -d /run/chimera-idle && touch /run/chimera-idle/awake.lock
   - systemctl daemon-reload
   - systemctl enable --now chimera-idle.timer
   - systemctl try-reload-or-restart ssh
