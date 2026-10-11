@@ -133,6 +133,10 @@ write_files:
 
       [Install]
       WantedBy=timers.target
+  - path: /etc/systemd/logind.conf.d/60-chimera.conf
+    content: |
+      [Login]
+      PowerKeyIgnoreInhibited=yes
   - path: /etc/ssh/sshd_config.d/60-chimera.conf
     content: |
       ClientAliveInterval 60
@@ -147,6 +151,7 @@ runcmd:
     fi
   - install -d /run/chimera-idle && touch /run/chimera-idle/awake.lock
   - systemctl daemon-reload
+  - systemctl reload systemd-logind
   - systemctl enable --now chimera-idle.timer chimera-backup.timer
   - systemctl try-reload-or-restart ssh
   - curl -fsSL https://tailscale.com/install.sh | sh
