@@ -23,6 +23,9 @@ ssh_answers() {
 cmd_status() {
   local status
   status=$(server_status)
+  if [ -n "$status" ] && ! hcloud server describe "$name" -o json | jq -e '.public_net.firewalls | length > 0' >/dev/null; then
+    echo "Warning: public SSH is open. Close it with: hcloud firewall apply-to-resource $firewall --type server --server $name" >&2
+  fi
   case "$status" in
     "") echo asleep ;;
     running) if ssh_answers; then echo awake; else echo waking; fi ;;
@@ -96,8 +99,9 @@ cmd_backup_keys() {
 
 close_public_ssh() {
   echo "Closing public SSH..."
-  hcloud firewall apply-to-resource "$firewall" --type server --server "$name" >/dev/null \
-    || echo "Couldn't close public SSH. Run: hcloud firewall apply-to-resource $firewall --type server --server $name" >&2
+  hcloud firewall apply-to-resource "$firewall" --type server --server "$name" >/dev/null && return
+  echo "PUBLIC SSH IS STILL OPEN. Close it with: hcloud firewall apply-to-resource $firewall --type server --server $name" >&2
+  return 1
 }
 
 cmd_restore() {
@@ -127,8 +131,8 @@ cmd_restore() {
 
   if "${public[@]}" "test -e /home/.chimera/backup/env || tailscale status >/dev/null 2>&1"; then
     echo "This disk isn't blank (it has backup keys or a Tailscale login). Not restoring over it." >&2
-    close_public_ssh
     trap 'rm -rf "$tmp"' EXIT
+    close_public_ssh || true
     cmd_sleep
     exit 1
   fi
@@ -141,8 +145,8 @@ cmd_restore() {
   "${public[@]}" "sudo systemctl reboot" || true
   sleep 15
 
-  close_public_ssh
   trap 'rm -rf "$tmp"' EXIT
+  close_public_ssh || exit 1
   echo "Waiting for $user@$name over Tailscale..."
   for _ in $(seq 60); do
     if ssh_answers; then echo "restored"; return; fi
