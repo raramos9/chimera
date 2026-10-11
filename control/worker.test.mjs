@@ -17,12 +17,14 @@ register("data:text/javascript," + encodeURIComponent(hook));
 const calls = [];
 let list = () => new Response(JSON.stringify({ servers: [] }));
 let actionPolls = 0;
+let volumes = [{ id: 107072286, name: "chimera-home" }];
 
 globalThis.fetch = async (url, init) => {
   const { pathname } = new URL(url);
   calls.push({ url, method: init.method, headers: init.headers, body: init.body });
   if (init.method === "DELETE") return new Response(JSON.stringify({ action: { id: 7, status: "running" } }));
   if (init.method === "POST") return new Response(JSON.stringify({ server: { id: 1 } }));
+  if (pathname === "/v1/volumes") return new Response(JSON.stringify({ volumes }));
   if (pathname === "/v1/actions/7") {
     return new Response(JSON.stringify({ action: { id: 7, status: actionPolls++ === 0 ? "running" : "success" } }));
   }
@@ -150,6 +152,7 @@ await runWake("asleep computer is created", [], () => wake("pw"), async (res) =>
   assert.equal(res.status, 202);
   assert.equal(await res.text(), "Waking up. Ready in about a minute.");
   assert.equal(posts().length, 1);
+  assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/volumes?name=chimera-home"));
   assert.equal(posts()[0].url, "https://api.hetzner.cloud/v1/servers");
   assert.equal(posts()[0].headers["Content-Type"], "application/json");
   assert.deepEqual(JSON.parse(posts()[0].body), {
@@ -196,6 +199,13 @@ await runWake("powered-off computer is deleted, then created", [{ id: 42, name: 
     "DELETE /v1/servers/42",
     "GET /v1/actions/7",
     "GET /v1/actions/7",
+    "GET /v1/volumes",
     "POST /v1/servers",
   ]);
+});
+
+volumes = [];
+await runWake("missing volume refuses to create a server", [], () => wake("pw").catch((e) => e), async (err) => {
+  assert.match(err.message, /expected one volume named chimera-home, found 0/);
+  assert.equal(posts().length, 0);
 });

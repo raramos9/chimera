@@ -18,11 +18,16 @@ ssh_deletekeys: false
 bootcmd:
   - |
     set -eu
-    dev=/dev/disk/by-id/scsi-0HC_Volume_107072286
     keys=/home/.chimera/ssh-host-keys
 
-    for _ in $(seq 60); do [ -e "$dev" ] && break; sleep 1; done
-    [ -e "$dev" ] || { echo "chimera: volume $dev never appeared" >&2; exit 1; }
+    for _ in $(seq 60); do
+      set -- /dev/disk/by-id/scsi-0HC_Volume_*
+      [ -e "$1" ] && break
+      sleep 1
+    done
+    [ -e "$1" ] || { echo "chimera: the volume never appeared" >&2; exit 1; }
+    [ $# -eq 1 ] || { echo "chimera: expected one volume, found $*" >&2; exit 1; }
+    dev=$1
 
     if ! mountpoint -q /home; then
       rc=0; blkid -p "$dev" >/dev/null || rc=$?
