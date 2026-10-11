@@ -75,6 +75,43 @@ write_files:
     content: |
       #!/bin/sh
       exec flock -o -s /run/chimera-idle/awake.lock "$@"
+  - path: /usr/local/bin/chimera-agent-busy
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      pid=$PPID
+      while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+        [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = claude ] && break
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+      done
+      [ -n "$pid" ] && [ "$pid" -gt 1 ] || exit 0
+      busy=$(python3 -c '
+      import json, sys
+      d = json.load(sys.stdin)
+      event = d.get("hook_event_name")
+      tasks = d.get("background_tasks") or []
+      running = any(t.get("status") == "running" for t in tasks)
+      print(int(event == "UserPromptSubmit" or (event == "Stop" and running) or bool(d.get("session_crons"))))
+      ' 2>/dev/null) || exit 0
+      holder="tail --pid=$pid -f /dev/null"
+      if [ "$busy" = 1 ]; then
+        pgrep -f "$holder" >/dev/null \
+          || setsid -f flock -o -s /run/chimera-idle/awake.lock tail --pid="$pid" -f /dev/null </dev/null >/dev/null 2>&1
+      else
+        pkill -f "$holder" || true
+      fi
+      exit 0
+  - path: /etc/claude-code/managed-settings.json
+    content: |
+      {"hooks": {
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/usr/local/bin/chimera-agent-busy"}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": "/usr/local/bin/chimera-agent-busy"}]}]
+      }}
+  - path: /etc/profile.d/chimera-tmux.sh
+    content: |
+      if [ -n "${SSH_CONNECTION:-}" ] && [ -z "${TMUX:-}" ] && [ -t 0 ] && command -v tmux >/dev/null; then
+        tmux new-session -A -s main && exit
+      fi
   - path: /usr/local/bin/chimera-restic
     permissions: "0755"
     content: |
