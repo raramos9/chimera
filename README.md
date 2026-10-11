@@ -30,4 +30,33 @@ Close Termius whenever you like. Come back later with `tmux attach -t work`.
 
 `awake` works with any command, like `awake npm test`. While the command runs, the computer stays on even with nobody connected. When it ends, or crashes, the usual 30-minute countdown starts. Anything the command leaves running in the background doesn't keep the computer on. Claude waiting for your next message still counts as running, so quit Claude when you're done. The Worker shuts down anything awake for 24 hours either way.
 
-The agent runs as `andre`, who has full admin rights, and the volume has no backup yet.
+The agent runs as `andre`, who has full admin rights. Backups (below) are the safety net.
+
+## Backups
+
+`/home` is backed up to the Cloudflare R2 bucket `chimera-backup` every hour while the computer is on, and again right before it sleeps from being idle. Caches, `node_modules`, and Docker's downloaded images are skipped. Run `sudo chimera-backup` to back up right now.
+
+The R2 bucket has lock rules that stop anything from deleting or changing a backup, ever. The computer can add backups but can't remove them, and neither can anything running on it. Only you can change the rules, from the laptop with your Cloudflare login. Removing a rule is the only way to clean up old backups.
+
+Everything is scrambled with the backup password before it leaves the computer. A copy is in your password manager. Without it, the backups can't be opened by anyone, including you.
+
+### Getting files back
+
+On the computer:
+
+```
+sudo chimera-restic snapshots
+sudo chimera-restic restore latest --include /home/andre/projects/website --target /tmp/restore
+sudo cat /tmp/restore/home/andre/projects/website/index.html
+sudo mv /tmp/restore/home/andre/projects/website ~/projects/
+sudo chown -R andre:andre ~/projects/website
+sudo rm -rf /tmp/restore
+```
+
+The first command lists every backup with its time. Put a backup's ID in place of `latest` to restore from an earlier one. Restores go to `/tmp/restore` first, so nothing in your home folder is overwritten. That folder is admin-only, which is why looking inside needs `sudo`.
+
+### Setting it up again
+
+The R2 key and backup password live in `~/.config/chimera/backup.env` and `~/.config/chimera/backup-password` on the laptop, and on the volume in `/home/.chimera/backup/`. If you change either one, run `bin/chimera backup-keys` from the laptop to copy them over.
+
+If the volume is ever lost, make a new one, wake the computer, run `bin/chimera backup-keys`, then restore `/home` from the latest backup.
