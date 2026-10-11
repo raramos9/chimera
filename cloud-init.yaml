@@ -4,7 +4,7 @@ users:
   - name: andre
     uid: 1000
     shell: /bin/bash
-    groups: [sudo]
+    groups: [sudo, docker]
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     lock_passwd: true
     ssh_authorized_keys:
@@ -46,9 +46,6 @@ bootcmd:
     mountpoint -q /var/lib/docker || mount --bind /home/.chimera/docker /var/lib/docker
     install -d -m 711 /home/.chimera/containerd /var/lib/containerd
     mountpoint -q /var/lib/containerd || mount --bind /home/.chimera/containerd /var/lib/containerd
-
-package_update: true
-packages: [restic]
 
 write_files:
   - path: /usr/local/bin/chimera-idle-check
@@ -174,6 +171,3 @@ runcmd:
   - systemctl reload systemd-logind
   - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
   - systemctl try-reload-or-restart ssh
-  - curl -fsSL https://tailscale.com/install.sh | sh
-  - curl -fsSL https://get.docker.com | sh
-  - usermod -aG docker andre

@@ -3,6 +3,7 @@ import cloudInit from "../cloud-init.yaml";
 const name = "chimera";
 const api = "https://api.hetzner.cloud/v1";
 const volumeName = "chimera-home";
+const imageLabel = "chimera=base";
 const primaryIpId = 154132581; // chimera-ip
 const firewallId = 11770509; // chimera-firewall
 
@@ -57,10 +58,13 @@ async function hetzner(env, method, path, body) {
 async function createServer(env) {
   const { volumes } = await hetzner(env, "GET", `/volumes?name=${volumeName}`);
   if (volumes.length !== 1) throw new Error(`expected one volume named ${volumeName}, found ${volumes.length}`);
+  const { images } = await hetzner(env, "GET",
+    `/images?type=snapshot&label_selector=${encodeURIComponent(imageLabel)}&sort=created:desc`);
+  if (images.length === 0) throw new Error(`no snapshot labeled ${imageLabel}, run 'chimera build-image'`);
   return hetzner(env, "POST", "/servers", {
     name,
     server_type: "cpx11",
-    image: "ubuntu-24.04",
+    image: images[0].id,
     location: "hil",
     ssh_keys: ["laptop"],
     volumes: [volumes[0].id],

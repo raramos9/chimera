@@ -32,6 +32,10 @@ Close Termius whenever you like. Come back later with `tmux attach -t work`.
 
 The agent runs as `andre`, who has full admin rights. Backups (below) are the safety net.
 
+## Software updates
+
+Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. The image doesn't update itself, so run `bin/chimera build-image` from the laptop every week or two, and after changing `image.yaml`. It takes about two minutes, uses a throwaway server, keeps the previous image as a fallback, and the next wake picks up the new one. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.
+
 ## Backups
 
 `/home` is backed up to the Cloudflare R2 bucket `chimera-backup` every hour while the computer is on, and again whenever it shuts down, whether it went idle, you ran `chimera sleep`, or the 24-hour limit kicked in. Caches, `node_modules`, and Docker's downloaded images are skipped. Run `sudo chimera-backup` to back up right now.
