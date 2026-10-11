@@ -77,9 +77,18 @@ cmd_wake() {
   exit 1
 }
 
+cmd_backup_keys() {
+  local config=~/.config/chimera dir=/home/.chimera/backup
+  ssh "$user@$name" "sudo install -d -m 700 $dir && sudo sh -c 'umask 077 && cat > $dir/env'" < "$config/backup.env"
+  ssh "$user@$name" "sudo sh -c 'umask 077 && cat > $dir/password'" < "$config/backup-password"
+  ssh "$user@$name" "sudo chimera-restic cat config >/dev/null 2>&1 || sudo chimera-restic init"
+  echo "backup keys are on the volume"
+}
+
 case "${1:-}" in
   sleep) cmd_sleep ;;
   wake) cmd_wake ;;
   status) cmd_status ;;
-  *) echo "usage: chimera sleep|wake|status" >&2; exit 2 ;;
+  backup-keys) cmd_backup_keys ;;
+  *) echo "usage: chimera sleep|wake|status|backup-keys" >&2; exit 2 ;;
 esac

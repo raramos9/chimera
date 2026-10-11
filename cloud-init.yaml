@@ -42,6 +42,9 @@ bootcmd:
     install -d -m 711 /home/.chimera/containerd /var/lib/containerd
     mountpoint -q /var/lib/containerd || mount --bind /home/.chimera/containerd /var/lib/containerd
 
+package_update: true
+packages: [restic]
+
 write_files:
   - path: /usr/local/bin/chimera-idle-check
     permissions: "0755"
@@ -52,14 +55,19 @@ write_files:
       mkdir -p "$dir"
       minutes=30
       if [ -e "$dir/minutes" ]; then minutes=$(cat "$dir/minutes"); fi
-      if [ ! -e "$dir/last-busy" ] || [ -e /home/andre/.keep-awake ] \
-        || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
-        || ! flock -n -x "$dir/awake.lock" true; then
+      busy() {
+        [ -e /home/andre/.keep-awake ] \
+          || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
+          || ! flock -n -x "$dir/awake.lock" true
+      }
+      if [ ! -e "$dir/last-busy" ] || busy; then
         touch "$dir/last-busy"
         exit 0
       fi
       if [ $(( $(date +%s) - $(stat -c %Y "$dir/last-busy") )) -ge $(( minutes * 60 )) ]; then
-        echo "chimera: idle for $minutes minutes, powering off"
+        echo "chimera: idle for $minutes minutes, backing up then powering off"
+        timeout 15m /usr/local/bin/chimera-backup || echo "chimera: backup before sleep failed" >&2
+        if busy; then touch "$dir/last-busy"; exit 0; fi
         systemctl poweroff
       fi
   - path: /usr/local/bin/awake
@@ -67,6 +75,47 @@ write_files:
     content: |
       #!/bin/sh
       exec flock -o -s /run/chimera-idle/awake.lock "$@"
+  - path: /usr/local/bin/chimera-restic
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      dir=/home/.chimera/backup
+      set -a; . "$dir/env"; set +a
+      export RESTIC_PASSWORD_FILE="$dir/password" RESTIC_CACHE_DIR="$dir/cache"
+      exec restic "$@"
+  - path: /usr/local/bin/chimera-backup
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      if [ ! -e /home/.chimera/backup/env ]; then
+        echo "chimera: no backup keys on the volume, skipping backup"
+        exit 0
+      fi
+      exec flock /run/chimera-backup.lock /usr/local/bin/chimera-restic backup /home --host chimera \
+        --exclude /home/.chimera/backup \
+        --exclude /home/.chimera/containerd \
+        --exclude '/home/.chimera/docker/*' \
+        --exclude '!/home/.chimera/docker/volumes' \
+        --exclude '/home/*/.cache' \
+        --exclude node_modules
+  - path: /etc/systemd/system/chimera-backup.service
+    content: |
+      [Unit]
+      Description=Back up /home to R2
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/chimera-backup
+  - path: /etc/systemd/system/chimera-backup.timer
+    content: |
+      [Timer]
+      OnBootSec=1h
+      OnUnitActiveSec=1h
+
+      [Install]
+      WantedBy=timers.target
   - path: /etc/systemd/system/chimera-idle.service
     content: |
       [Unit]
@@ -98,7 +147,7 @@ runcmd:
     fi
   - install -d /run/chimera-idle && touch /run/chimera-idle/awake.lock
   - systemctl daemon-reload
-  - systemctl enable --now chimera-idle.timer
+  - systemctl enable --now chimera-idle.timer chimera-backup.timer
   - systemctl try-reload-or-restart ssh
   - curl -fsSL https://tailscale.com/install.sh | sh
   - curl -fsSL https://get.docker.com | sh
