@@ -1,0 +1,9 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+packages: [restic]
+
+runcmd:
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - curl -fsSL https://get.docker.com | sh
