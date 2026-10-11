@@ -59,4 +59,4 @@ The first command lists every backup with its time. Put a backup's ID in place o
 
 The R2 key and backup password live in `~/.config/chimera/backup.env` and `~/.config/chimera/backup-password` on the laptop, and on the volume in `/home/.chimera/backup/`. If you change either one, run `bin/chimera backup-keys` from the laptop to copy them over.
 
-If the volume is ever lost, make a new one, wake the computer, run `bin/chimera backup-keys`, then restore `/home` from the latest backup.
+If the volume is ever lost, make a new one and put its ID everywhere the old one appears (`bin/chimera`, `control/worker.js`, and the disk path in `cloud-init.yaml`). Then redeploy the Worker, wake the computer, run `bin/chimera backup-keys`, and restore `/home` from the latest backup. Ask Claude to walk you through it, since it's rare and easy to get wrong.
