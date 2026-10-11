@@ -25,6 +25,8 @@ woke=$(date +%s)
 "$chimera" wake
 
 remote "sudo mkdir -p /run/chimera-idle && echo 1000 | sudo tee /run/chimera-idle/minutes >/dev/null"
+token="awake-limit-$(date +%s)-$RANDOM"
+remote "echo $token > backup-test"
 
 echo "Waiting for the Worker to shut the server down and delete it (up to $force_after minutes)..."
 saw_off=
@@ -36,7 +38,12 @@ while [ $(( $(date +%s) - woke )) -lt $((force_after * 60)) ]; do
     [ "$elapsed" -ge "$limit" ] || fail "server was deleted after $elapsed minutes, before the $limit-minute limit"
     [ "$("$chimera" status)" = asleep ] || fail "computer is not asleep"
     hcloud volume describe chimera-home >/dev/null || fail "volume was deleted"
-    echo "PASS: the Worker shut down and deleted the server $elapsed minutes after waking${saw_off:+ (seen powered off first)}"
+    "$chimera" wake
+    [ "$(remote "sudo chimera-restic dump latest /home/andre/backup-test")" = "$token" ] \
+      || fail "the backup before the Worker's shutdown didn't include the newest file"
+    remote "rm backup-test"
+    "$chimera" sleep
+    echo "PASS: the Worker shut down and deleted the server $elapsed minutes after waking${saw_off:+ (seen powered off first)}, backing up first"
     exit 0
   fi
   sleep 15

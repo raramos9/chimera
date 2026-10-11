@@ -65,9 +65,7 @@ write_files:
         exit 0
       fi
       if [ $(( $(date +%s) - $(stat -c %Y "$dir/last-busy") )) -ge $(( minutes * 60 )) ]; then
-        echo "chimera: idle for $minutes minutes, backing up then powering off"
-        timeout 15m /usr/local/bin/chimera-backup || echo "chimera: backup before sleep failed" >&2
-        if busy; then touch "$dir/last-busy"; exit 0; fi
+        echo "chimera: idle for $minutes minutes, powering off"
         systemctl poweroff
       fi
   - path: /usr/local/bin/awake
@@ -116,6 +114,23 @@ write_files:
 
       [Install]
       WantedBy=timers.target
+  - path: /etc/systemd/system/chimera-backup-on-shutdown.service
+    content: |
+      [Unit]
+      Description=Back up /home to R2 before shutting down
+      Wants=network-online.target
+      After=network-online.target systemd-networkd.service systemd-resolved.service
+      RequiresMountsFor=/home
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/true
+      ExecStop=/usr/local/bin/chimera-backup
+      TimeoutStopSec=10min
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /etc/systemd/system/chimera-idle.service
     content: |
       [Unit]
@@ -152,7 +167,7 @@ runcmd:
   - install -d /run/chimera-idle && touch /run/chimera-idle/awake.lock
   - systemctl daemon-reload
   - systemctl reload systemd-logind
-  - systemctl enable --now chimera-idle.timer chimera-backup.timer
+  - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
   - systemctl try-reload-or-restart ssh
   - curl -fsSL https://tailscale.com/install.sh | sh
   - curl -fsSL https://get.docker.com | sh

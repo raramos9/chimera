@@ -12,6 +12,7 @@ latest_file() { remote "sudo chimera-restic dump latest /home/andre/backup-test"
 "$chimera" wake
 remote "command -v restic chimera-backup" >/dev/null || fail "restic or chimera-backup isn't installed"
 remote "systemctl is-enabled chimera-backup.timer" >/dev/null || fail "hourly backup timer isn't enabled"
+remote "systemctl is-active chimera-backup-on-shutdown.service" >/dev/null || fail "backup on shutdown isn't armed"
 "$chimera" backup-keys
 
 token="backup-$(date +%s)-$RANDOM"
@@ -38,10 +39,16 @@ done
 
 "$chimera" sleep
 "$chimera" wake
-[ "$(latest_file)" = "$token" ] || fail "the backup before sleep didn't include the newest file"
+[ "$(latest_file)" = "$token" ] || fail "the backup before idle sleep didn't include the newest file"
+
+token="backup-$(date +%s)-$RANDOM"
+remote "echo $token > backup-test"
+"$chimera" sleep
+"$chimera" wake
+[ "$(latest_file)" = "$token" ] || fail "the backup before 'chimera sleep' didn't include the newest file"
 remote "rm backup-test"
 
 "$chimera" sleep
 [ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
 
-echo "PASS: restored a deleted file, R2 refused to delete a backup, backed up before sleeping"
+echo "PASS: restored a deleted file, R2 refused to delete a backup, backed up before idle sleep and before chimera sleep"
