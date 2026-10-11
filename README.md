@@ -34,7 +34,7 @@ The agent runs as `andre`, who has full admin rights. Backups (below) are the sa
 
 ## Backups
 
-`/home` is backed up to the Cloudflare R2 bucket `chimera-backup` every hour while the computer is on, and again right before it sleeps from being idle. Caches, `node_modules`, and Docker's downloaded images are skipped. Run `sudo chimera-backup` to back up right now.
+`/home` is backed up to the Cloudflare R2 bucket `chimera-backup` every hour while the computer is on, and again whenever it shuts down, whether it went idle, you ran `chimera sleep`, or the 24-hour limit kicked in. Caches, `node_modules`, and Docker's downloaded images are skipped. Run `sudo chimera-backup` to back up right now.
 
 The R2 bucket has lock rules that stop anything from deleting or changing a backup, ever. The computer can add backups but can't remove them, and neither can anything running on it. Only you can change the rules, from the laptop with your Cloudflare login. Removing a rule is the only way to clean up old backups.
 

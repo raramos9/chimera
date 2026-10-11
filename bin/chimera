@@ -37,8 +37,9 @@ cmd_sleep() {
   status=$(server_status)
   if [ "$status" = running ]; then
     hcloud server shutdown "$name"
+    echo "Backing up before sleep..."
   fi
-  for _ in $(seq 60); do
+  for _ in $(seq 360); do
     status=$(server_status)
     case "$status" in
       "") echo asleep; return ;;
@@ -46,7 +47,7 @@ cmd_sleep() {
     esac
     sleep 2
   done
-  echo "The server didn't shut down within 2 minutes. Run 'chimera sleep' again, or force it off with 'hcloud server poweroff $name'." >&2
+  echo "The server didn't shut down within 12 minutes. Run 'chimera sleep' again, or force it off with 'hcloud server poweroff $name'." >&2
   exit 1
 }
 
