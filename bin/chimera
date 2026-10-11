@@ -140,7 +140,7 @@ cmd_restore() {
   echo "Copying backup keys..."
   push_backup_keys "${public[@]}"
   echo "Restoring /home from the latest backup..."
-  "${public[@]}" "sudo systemctl stop docker.socket docker containerd tailscaled && sudo chimera-restic restore latest --target /"
+  "${public[@]}" "sudo systemctl stop docker.socket docker containerd tailscaled && sudo chimera-restic restore latest --target / --exclude /home/.chimera/docker/volumes/backingFsBlockDev"
   echo "Restarting so it picks up its old Tailscale login and SSH fingerprint..."
   "${public[@]}" "sudo systemctl reboot" || true
   sleep 15
