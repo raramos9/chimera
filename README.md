@@ -13,7 +13,7 @@ If the page doesn't load, the app is probably accepting visitors only from the c
 - Start the app with its host option set to `0.0.0.0`. For Vite, that's `npm run dev -- --host 0.0.0.0`.
 - Or leave the app alone and run `sudo tailscale serve --bg 3000`. Then open `https://chimera.tailed8053.ts.net`. It works only from your own devices, and it keeps working after the computer sleeps and wakes. Turn it off with `sudo tailscale serve reset`.
 
-For Docker, `-p 3000:3000` makes a container reachable at `http://chimera:3000`. `-p 127.0.0.1:3000:3000` keeps it on the computer, which is the right pair for `tailscale serve`. Add `--restart=always` if it should come back after a wake.
+For Docker, `-p 3000:3000` makes a container reachable at `http://chimera:3000`. `-p 127.0.0.1:3000:3000` keeps it on the computer, which is the right pair for `tailscale serve`. Add `--restart=always` if it should come back after a wake. For anything long-lived, put the settings in a `compose.yaml` in the project folder and start it with `docker compose up -d`. Backups keep Docker volumes but not containers, so after a restore that same command is how you get the container back.
 
 Visiting an app does not keep the computer awake. After 30 minutes with no SSH session and no `~/.keep-awake` file, it sleeps and the app goes away until the next wake.
 
@@ -59,4 +59,4 @@ The first command lists every backup with its time. Put a backup's ID in place o
 
 The R2 key and backup password live in `~/.config/chimera/backup.env` and `~/.config/chimera/backup-password` on the laptop, and on the volume in `/home/.chimera/backup/`. If you change either one, run `bin/chimera backup-keys` from the laptop to copy them over.
 
-If the volume is ever lost, make a new one in `hil` with the same name, `chimera-home`. Everything finds the volume by that name, so no code changes. Then run `bin/chimera restore` from the laptop while the computer is asleep. It wakes the computer onto the blank volume, briefly opens public SSH, puts the latest backup back on `/home`, and restarts it so it rejoins Tailscale as `chimera` with its old SSH fingerprint. It refuses to run if the volume isn't blank. Anything changed after the last backup is lost, and Docker images download again when needed.
+If the volume is ever lost, make a new one in `hil` with the same name, `chimera-home`. Everything finds the volume by that name, so no code changes. Then run `bin/chimera restore` from the laptop while the computer is asleep. It wakes the computer onto the blank volume, briefly opens public SSH, puts the latest backup back on `/home`, and restarts it so it rejoins Tailscale as `chimera` with its old SSH fingerprint. It refuses to run if the volume isn't blank. Anything changed after the last backup is lost. Docker volumes come back, but containers don't. Run `docker compose up -d` in each project folder to start them again, and images download as needed.
