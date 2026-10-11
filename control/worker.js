@@ -2,7 +2,7 @@ import cloudInit from "../cloud-init.yaml";
 
 const name = "chimera";
 const api = "https://api.hetzner.cloud/v1";
-const volumeId = 107072286; // chimera-home
+const volumeName = "chimera-home";
 const primaryIpId = 154132581; // chimera-ip
 const firewallId = 11770509; // chimera-firewall
 
@@ -54,14 +54,16 @@ async function hetzner(env, method, path, body) {
   return res.json();
 }
 
-function createServer(env) {
+async function createServer(env) {
+  const { volumes } = await hetzner(env, "GET", `/volumes?name=${volumeName}`);
+  if (volumes.length !== 1) throw new Error(`expected one volume named ${volumeName}, found ${volumes.length}`);
   return hetzner(env, "POST", "/servers", {
     name,
     server_type: "cpx11",
     image: "ubuntu-24.04",
     location: "hil",
     ssh_keys: ["laptop"],
-    volumes: [volumeId],
+    volumes: [volumes[0].id],
     automount: false,
     public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: primaryIpId },
     firewalls: [{ firewall: firewallId }],
