@@ -16,3 +16,18 @@ If the page doesn't load, the app is probably accepting visitors only from the c
 For Docker, `-p 3000:3000` makes a container reachable at `http://chimera:3000`. `-p 127.0.0.1:3000:3000` keeps it on the computer, which is the right pair for `tailscale serve`. Add `--restart=always` if it should come back after a wake.
 
 Visiting an app does not keep the computer awake. After 30 minutes with no SSH session and no `~/.keep-awake` file, it sleeps and the app goes away until the next wake.
+
+## Running an AI agent
+
+Claude Code is installed in the home folder (`~/.local/bin/claude`), so it and its login survive sleep. To leave it working after you disconnect:
+
+```
+tmux new -s work
+awake claude
+```
+
+Close Termius whenever you like. Come back later with `tmux attach -t work`.
+
+`awake` works with any command, like `awake npm test`. While the command runs, the computer stays on even with nobody connected. When it ends, or crashes, the usual 30-minute countdown starts. Anything the command leaves running in the background doesn't keep the computer on. Claude waiting for your next message still counts as running, so quit Claude when you're done. The Worker shuts down anything awake for 24 hours either way.
+
+The agent runs as `andre`, who has full admin rights, and the volume has no backup yet.
