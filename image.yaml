@@ -7,3 +7,12 @@ packages: [restic]
 runcmd:
   - curl -fsSL https://tailscale.com/install.sh | sh
   - curl -fsSL https://get.docker.com | sh
+  # Powers off only if everything installed. The Worker saves a powered-off build server as the new image.
+  - |
+    systemd-run --unit chimera-seal sh -c '
+      cloud-init status --wait >/dev/null \
+        && command -v restic && command -v tailscale && command -v docker \
+        && systemctl stop tailscaled docker docker.socket containerd \
+        && rm -rf /var/lib/tailscale/* /var/lib/docker/* /var/lib/containerd/* /etc/ssh/ssh_host_* \
+        && cloud-init clean --logs --machine-id \
+        && sync && systemctl poweroff'

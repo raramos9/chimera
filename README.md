@@ -34,7 +34,9 @@ The agent runs as `andre`, who has full admin rights. Backups (below) are the sa
 
 ## Software updates
 
-Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. The image doesn't update itself, so run `bin/chimera build-image` from the laptop every week or two, and after changing `image.yaml`. It takes about two minutes, uses a throwaway server, keeps the previous image as a fallback, and the next wake picks up the new one. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.
+Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.
+
+The Worker rebuilds the image once a week. It starts a throwaway build server, which installs everything and powers itself off only if every install worked. The Worker then saves it as the new image and keeps the previous one as a fallback. A wake during a build uses the previous image. If a build fails, the Worker deletes the build server after an hour and tries again the next day. To rebuild right away, for example after changing `image.yaml`, run `bin/chimera build-image` from the laptop. It starts a build and waits up to 20 minutes for the Worker to finish it.
 
 ## Backups
 

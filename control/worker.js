@@ -1,9 +1,12 @@
 import cloudInit from "../cloud-init.yaml";
+import imageInit from "../image.yaml";
 
 const name = "chimera";
 const api = "https://api.hetzner.cloud/v1";
 const volumeName = "chimera-home";
 const imageLabel = "chimera=base";
+const buildName = "chimera-image-build";
+const keepImages = 2;
 const primaryIpId = 154132581; // chimera-ip
 const firewallId = 11770509; // chimera-firewall
 
@@ -43,6 +46,28 @@ const sweepRequests = {
   poweroff: (id) => ["POST", `/servers/${id}/actions/poweroff`],
 };
 
+const rebuildAfterDays = 7;
+const retryAfterHours = 24;
+const giveUpOnBuildMinutes = 60;
+
+const hoursSince = (time) => (Date.now() - Date.parse(time)) / 3600000;
+
+function buildAction(build, images) {
+  if (build) {
+    if (build.status === "off") {
+      const saved = images.find((image) => image.created_from?.id === build.id);
+      if (!saved) return "snapshot";
+      return saved.status === "available" ? "finish" : null;
+    }
+    return hoursSince(build.created) * 60 >= giveUpOnBuildMinutes ? "abandon" : null;
+  }
+  const newest = images.find((image) => image.status === "available");
+  if (!newest) return "start";
+  const started = Number(newest.labels.build_started ?? 0) * 1000;
+  const retryReady = !started || (Date.now() - started) / 3600000 >= retryAfterHours;
+  return hoursSince(newest.created) >= rebuildAfterDays * 24 && retryReady ? "start" : null;
+}
+
 async function hetzner(env, method, path, body) {
   const headers = { Authorization: `Bearer ${env.HCLOUD_TOKEN}` };
   if (body) headers["Content-Type"] = "application/json";
@@ -59,7 +84,7 @@ async function createServer(env) {
   const { volumes } = await hetzner(env, "GET", `/volumes?name=${volumeName}`);
   if (volumes.length !== 1) throw new Error(`expected one volume named ${volumeName}, found ${volumes.length}`);
   const { images } = await hetzner(env, "GET",
-    `/images?type=snapshot&label_selector=${encodeURIComponent(imageLabel)}&sort=created:desc`);
+    `/images?type=snapshot&status=available&label_selector=${encodeURIComponent(imageLabel)}&sort=created:desc`);
   if (images.length === 0) throw new Error(`no snapshot labeled ${imageLabel}, run 'chimera build-image'`);
   return hetzner(env, "POST", "/servers", {
     name,
@@ -73,6 +98,51 @@ async function createServer(env) {
     firewalls: [{ firewall: firewallId }],
     user_data: cloudInit,
   });
+}
+
+const buildSteps = {
+  async start(env, build, images) {
+    await hetzner(env, "POST", "/servers", {
+      name: buildName,
+      server_type: "cpx11",
+      image: "ubuntu-24.04",
+      location: "hil",
+      ssh_keys: ["laptop"],
+      firewalls: [{ firewall: firewallId }],
+      user_data: imageInit,
+    });
+    const newest = images.find((image) => image.status === "available");
+    if (newest) {
+      const labels = { ...newest.labels, build_started: String(Math.floor(Date.now() / 1000)) };
+      await hetzner(env, "PUT", `/images/${newest.id}`, { labels });
+    }
+  },
+  async snapshot(env, build) {
+    const [key, value] = imageLabel.split("=");
+    await hetzner(env, "POST", `/servers/${build.id}/actions/create_image`, {
+      type: "snapshot",
+      description: `chimera ${new Date().toISOString().slice(0, 10)}`,
+      labels: { [key]: value },
+    });
+  },
+  async finish(env, build, images) {
+    await hetzner(env, "DELETE", `/servers/${build.id}`);
+    const available = images.filter((image) => image.status === "available");
+    for (const old of available.slice(keepImages)) await hetzner(env, "DELETE", `/images/${old.id}`);
+  },
+  async abandon(env, build) {
+    await hetzner(env, "DELETE", `/servers/${build.id}`);
+  },
+};
+
+async function rebuildImage(env) {
+  const { servers } = await hetzner(env, "GET", `/servers?name=${buildName}`);
+  const { images } = await hetzner(env, "GET",
+    `/images?type=snapshot&label_selector=${encodeURIComponent(imageLabel)}&sort=created:desc`);
+  const action = buildAction(servers[0], images);
+  if (!action) return;
+  console.log(`image build: ${action}`);
+  await buildSteps[action](env, servers[0], images);
 }
 
 async function deleteAndWait(env, id) {
@@ -98,6 +168,7 @@ export default {
       console.log(`${action} ${server.name} (${server.id}), ${server.status} for ${Math.floor(minutes)} min`);
       await hetzner(env, ...sweepRequests[action](server.id));
     }
+    await rebuildImage(env);
   },
 
   async fetch(request, env) {

@@ -18,15 +18,25 @@ const calls = [];
 let list = () => new Response(JSON.stringify({ servers: [] }));
 let actionPolls = 0;
 let volumes = [{ id: 107072286, name: "chimera-home" }];
-let images = [{ id: 555 }, { id: 444 }];
+const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString();
+const image = (id, ageDays, extra = {}) =>
+  ({ id, status: "available", created: daysAgo(ageDays), labels: { chimera: "base" }, created_from: { id: 1 }, ...extra });
+const freshImages = [image(555, 1), image(444, 8)];
+let images = freshImages;
+let builds = [];
 
 globalThis.fetch = async (url, init) => {
-  const { pathname } = new URL(url);
+  const { pathname, searchParams } = new URL(url);
   calls.push({ url, method: init.method, headers: init.headers, body: init.body });
+  if (init.method === "PUT") return new Response(JSON.stringify({ image: {} }));
   if (init.method === "DELETE") return new Response(JSON.stringify({ action: { id: 7, status: "running" } }));
   if (init.method === "POST") return new Response(JSON.stringify({ server: { id: 1 } }));
   if (pathname === "/v1/volumes") return new Response(JSON.stringify({ volumes }));
-  if (pathname === "/v1/images") return new Response(JSON.stringify({ images }));
+  if (pathname === "/v1/images") {
+    const status = searchParams.get("status");
+    return new Response(JSON.stringify({ images: images.filter((i) => !status || i.status === status) }));
+  }
+  if (searchParams.get("name") === "chimera-image-build") return new Response(JSON.stringify({ servers: builds }));
   if (pathname === "/v1/actions/7") {
     return new Response(JSON.stringify({ action: { id: 7, status: actionPolls++ === 0 ? "running" : "success" } }));
   }
@@ -155,7 +165,7 @@ await runWake("asleep computer is created", [], () => wake("pw"), async (res) =>
   assert.equal(await res.text(), "Waking up. Ready in about 30 seconds.");
   assert.equal(posts().length, 1);
   assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/volumes?name=chimera-home"));
-  assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/images?type=snapshot&label_selector=chimera%3Dbase&sort=created:desc"));
+  assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/images?type=snapshot&status=available&label_selector=chimera%3Dbase&sort=created:desc"));
   assert.equal(posts()[0].url, "https://api.hetzner.cloud/v1/servers");
   assert.equal(posts()[0].headers["Content-Type"], "application/json");
   assert.deepEqual(JSON.parse(posts()[0].body), {
@@ -219,4 +229,80 @@ images = [];
 await runWake("missing image refuses to create a server", [], () => wake("pw").catch((e) => e), async (err) => {
   assert.match(err.message, /no snapshot labeled chimera=base/);
   assert.equal(posts().length, 0);
+});
+
+volumes = [{ id: 107072286, name: "chimera-home" }];
+
+async function runBuild(label, buildServers, imageList, check) {
+  calls.length = 0;
+  builds = buildServers;
+  images = imageList;
+  list = () => new Response(JSON.stringify({ servers: [] }));
+  await worker.scheduled({}, { HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440" });
+  check();
+  console.log(`PASS: ${label}`);
+}
+
+const build = (status, minutesAgo) =>
+  ({ id: 77, name: "chimera-image-build", status, created: new Date(Date.now() - minutesAgo * 60000).toISOString() });
+const writes = () => calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${new URL(c.url).pathname}`);
+
+await runBuild("image under a week old is left alone", [], freshImages, () => {
+  assert.deepEqual(writes(), []);
+});
+
+await runBuild("image a week old starts a build and marks when", [], [image(555, 7.1), image(444, 20)], () => {
+  assert.deepEqual(writes(), ["POST /v1/servers", "PUT /v1/images/555"]);
+  const body = JSON.parse(posts()[0].body);
+  assert.equal(body.name, "chimera-image-build");
+  assert.equal(body.image, "ubuntu-24.04");
+  assert.deepEqual(body.firewalls, [{ firewall: 11770509 }]);
+  assert.equal(body.volumes, undefined);
+  assert.equal(body.user_data, fs.readFileSync(fileURLToPath(new URL("../image.yaml", import.meta.url)), "utf8"));
+  const { labels } = JSON.parse(calls.find((c) => c.method === "PUT").body);
+  assert.equal(labels.chimera, "base");
+  assert.ok(Math.abs(Number(labels.build_started) - Date.now() / 1000) < 60);
+});
+
+await runBuild("no image at all starts a build", [], [], () => {
+  assert.deepEqual(writes(), ["POST /v1/servers"]);
+});
+
+const failedAt = (hoursAgo) => String(Math.floor(Date.now() / 1000 - hoursAgo * 3600));
+await runBuild("a build started 2 hours ago is not retried yet", [], [image(555, 8, { labels: { chimera: "base", build_started: failedAt(2) } })], () => {
+  assert.deepEqual(writes(), []);
+});
+
+await runBuild("a build started a day ago is retried", [], [image(555, 8, { labels: { chimera: "base", build_started: failedAt(25) } })], () => {
+  assert.deepEqual(writes(), ["POST /v1/servers", "PUT /v1/images/555"]);
+});
+
+await runBuild("a build still installing is left alone", [build("running", 10)], [image(555, 8)], () => {
+  assert.deepEqual(writes(), []);
+});
+
+await runBuild("a build that never powered off is deleted after an hour", [build("running", 61)], [image(555, 8)], () => {
+  assert.deepEqual(writes(), ["DELETE /v1/servers/77"]);
+});
+
+await runBuild("a powered-off build is saved as an image", [build("off", 5)], [image(555, 8)], () => {
+  assert.deepEqual(writes(), ["POST /v1/servers/77/actions/create_image"]);
+  const body = JSON.parse(posts()[0].body);
+  assert.equal(body.type, "snapshot");
+  assert.deepEqual(body.labels, { chimera: "base" });
+});
+
+await runBuild("an image still saving is left alone", [build("off", 8)], [image(600, 0, { status: "creating", created_from: { id: 77 } }), image(555, 8)], () => {
+  assert.deepEqual(writes(), []);
+});
+
+await runBuild("a saved build is deleted and only two images are kept", [build("off", 12)],
+  [image(600, 0, { created_from: { id: 77 } }), image(555, 8), image(444, 15)], () => {
+  assert.deepEqual(writes(), ["DELETE /v1/servers/77", "DELETE /v1/images/444"]);
+});
+
+builds = [];
+images = [image(600, 0, { status: "creating" }), image(555, 8)];
+await runWake("waking skips an image that is still saving", [], () => wake("pw"), async () => {
+  assert.equal(JSON.parse(posts()[0].body).image, 555);
 });
