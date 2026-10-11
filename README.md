@@ -19,16 +19,11 @@ Visiting an app does not keep the computer awake. After 30 minutes with no SSH s
 
 ## Running an AI agent
 
-Claude Code is installed in the home folder (`~/.local/bin/claude`), so it and its login survive sleep. To leave it working after you disconnect:
+Claude Code is installed in the home folder (`~/.local/bin/claude`), so it and its login survive sleep. Connecting puts you in a tmux session called `main`. It survives disconnects, so close Termius whenever you like and reconnect later to find everything where you left it. Just run `claude`.
 
-```
-tmux new -s work
-awake claude
-```
+The computer stays on while Claude is working, including background tasks it started. When Claude finishes and waits for you, the usual 30-minute countdown starts. If you stop Claude with Esc, it keeps the computer on until you send it another message or quit it. An open Claude that is waiting for you costs nothing. After a sleep, run `claude --continue` in the project folder to pick the conversation back up.
 
-Close Termius whenever you like. Come back later with `tmux attach -t work`.
-
-`awake` works with any command, like `awake npm test`. While the command runs, the computer stays on even with nobody connected. When it ends, or crashes, the usual 30-minute countdown starts. Anything the command leaves running in the background doesn't keep the computer on. Claude waiting for your next message still counts as running, so quit Claude when you're done. The Worker shuts down anything awake for 24 hours either way.
+`awake` is for other long commands, like `awake npm test`. While the command runs, the computer stays on even with nobody connected. When it ends, or crashes, the countdown starts. Use it too for something Claude starts that should keep running after Claude is done, like `awake npm run dev`. Anything else left running in the background doesn't keep the computer on. The Worker shuts down anything awake for 24 hours either way.
 
 The agent runs as `andre`, who has full admin rights. Backups (below) are the safety net.
 
