@@ -51,6 +51,12 @@ cmd_sleep() {
   exit 1
 }
 
+create_server() {
+  hcloud server create --name "$name" --type "$server_type" --image "$image" \
+    --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
+    --volume "$volume" --user-data-from-file "$@"
+}
+
 cmd_wake() {
   local status
   status=$(server_status)
@@ -60,9 +66,7 @@ cmd_wake() {
   fi
   case "$status" in
     "")
-      hcloud server create --name "$name" --type "$server_type" --image "$image" \
-        --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" --firewall "$firewall" \
-        --volume "$volume" --user-data-from-file "$cloud_init"
+      create_server "$cloud_init" --firewall "$firewall"
       ;;
     stopping|deleting)
       echo "The computer is still going to sleep. Run 'chimera wake' again in a minute." >&2
@@ -78,12 +82,74 @@ cmd_wake() {
   exit 1
 }
 
-cmd_backup_keys() {
+push_backup_keys() {
   local config=~/.config/chimera dir=/home/.chimera/backup
-  ssh "$user@$name" "sudo install -d -m 700 $dir && sudo sh -c 'umask 077 && cat > $dir/env'" < "$config/backup.env"
-  ssh "$user@$name" "sudo sh -c 'umask 077 && cat > $dir/password'" < "$config/backup-password"
-  ssh "$user@$name" "sudo chimera-restic cat config >/dev/null 2>&1 || sudo chimera-restic init"
+  "$@" "sudo install -d -m 700 $dir && sudo sh -c 'umask 077 && cat > $dir/env'" < "$config/backup.env"
+  "$@" "sudo sh -c 'umask 077 && cat > $dir/password'" < "$config/backup-password"
+  "$@" "sudo chimera-restic cat config >/dev/null 2>&1 || sudo chimera-restic init"
+}
+
+cmd_backup_keys() {
+  push_backup_keys ssh "$user@$name"
   echo "backup keys are on the volume"
+}
+
+close_public_ssh() {
+  echo "Closing public SSH..."
+  hcloud firewall apply-to-resource "$firewall" --type server --server "$name" >/dev/null \
+    || echo "Couldn't close public SSH. Run: hcloud firewall apply-to-resource $firewall --type server --server $name" >&2
+}
+
+cmd_restore() {
+  [ -z "$(server_status)" ] || { echo "Put the computer to sleep first with 'chimera sleep'. Restore wakes it itself." >&2; exit 1; }
+  tmp=$(mktemp -d)
+  trap 'close_public_ssh; rm -rf "$tmp"' EXIT
+
+  # A throwaway host key, given to the new server, lets us check we're talking to it before sending secrets.
+  ssh-keygen -q -t ed25519 -N '' -C chimera-restore -f "$tmp/host"
+  {
+    cat "$cloud_init"
+    echo "ssh_keys:"
+    echo "  ed25519_private: |"
+    sed 's/^/    /' "$tmp/host"
+    echo "  ed25519_public: $(cat "$tmp/host.pub")"
+  } > "$tmp/user-data"
+
+  echo "Waking with public SSH open..."
+  create_server "$tmp/user-data"
+  local ip
+  ip=$(hcloud server ip "$name")
+  echo "$ip $(cut -d' ' -f1,2 "$tmp/host.pub")" > "$tmp/known_hosts"
+  local public=(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=yes
+    -o UserKnownHostsFile="$tmp/known_hosts" -o HostKeyAlgorithms=ssh-ed25519 "$user@$ip")
+  for _ in $(seq 60); do "${public[@]}" true 2>/dev/null && break; sleep 3; done
+  "${public[@]}" "cloud-init status --wait >/dev/null" || { echo "Couldn't reach the computer at $ip, or its setup failed." >&2; exit 1; }
+
+  if "${public[@]}" "test -e /home/.chimera/backup/env || tailscale status >/dev/null 2>&1"; then
+    echo "This disk isn't blank (it has backup keys or a Tailscale login). Not restoring over it." >&2
+    close_public_ssh
+    trap 'rm -rf "$tmp"' EXIT
+    cmd_sleep
+    exit 1
+  fi
+
+  echo "Copying backup keys..."
+  push_backup_keys "${public[@]}"
+  echo "Restoring /home from the latest backup..."
+  "${public[@]}" "sudo systemctl stop docker.socket docker containerd tailscaled && sudo chimera-restic restore latest --target /"
+  echo "Restarting so it picks up its old Tailscale login and SSH fingerprint..."
+  "${public[@]}" "sudo systemctl reboot" || true
+  sleep 15
+
+  close_public_ssh
+  trap 'rm -rf "$tmp"' EXIT
+  echo "Waiting for $user@$name over Tailscale..."
+  for _ in $(seq 60); do
+    if ssh_answers; then echo "restored"; return; fi
+    sleep 5
+  done
+  echo "The computer didn't come back over Tailscale within 5 minutes. Run 'ssh $user@$name' to see the error." >&2
+  exit 1
 }
 
 case "${1:-}" in
@@ -91,5 +157,6 @@ case "${1:-}" in
   wake) cmd_wake ;;
   status) cmd_status ;;
   backup-keys) cmd_backup_keys ;;
-  *) echo "usage: chimera sleep|wake|status|backup-keys" >&2; exit 2 ;;
+  restore) cmd_restore ;;
+  *) echo "usage: chimera sleep|wake|status|backup-keys|restore" >&2; exit 2 ;;
 esac
