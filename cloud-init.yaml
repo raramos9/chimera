@@ -86,6 +86,8 @@ write_files:
     content: |
       [Unit]
       RequiresMountsFor=/var/lib/incus
+      Requires=chimera-firewall.service
+      After=chimera-firewall.service
   - path: /usr/local/bin/chimera
     permissions: "0755"
     content: |

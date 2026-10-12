@@ -35,6 +35,7 @@ fi
 
 [ "$(remote "incus network get incusbr0 dns.domain")" = ws ] || fail "the container network's DNS domain isn't ws"
 remote "systemctl is-active chimera-firewall.service" >/dev/null || fail "the container firewall isn't loaded"
+remote "systemctl show incus.service -p Requires" | grep -q chimera-firewall.service || fail "Incus can start without the container firewall"
 
 laptop_ip=$(tailscale ip -4)
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
@@ -43,7 +44,7 @@ dir=$(mktemp -d "${TMPDIR:-/tmp}/chimera-names/XXXXXX")
 echo "$token" > "$dir/index.html"
 python3 -m http.server "$port" --bind "$laptop_ip" --directory "$dir" >/dev/null 2>&1 &
 server=$!
-trap 'kill $server 2>/dev/null; wait $server 2>/dev/null; rm -rf "$dir"' EXIT
+trap 'kill $server 2>/dev/null; wait $server 2>/dev/null || true; rm -rf "$dir"' EXIT
 
 for _ in $(seq 10); do
   [ "$(fetch "http://$laptop_ip:$port/")" = "$token" ] && break
