@@ -127,7 +127,7 @@ write_files:
         script=/tmp/chimera-run-$(date +%s%N).sh
         printf '%q ' "$@" | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
         incus exec "$name" -- sudo -iu andre sh -c \
-          "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'bash -l $script; exec bash -l'"
+          "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'awake bash -l $script; exec bash -l'"
         echo "Started in $name. Watch it with 'chimera shell $name'."
       }
 
@@ -183,6 +183,8 @@ write_files:
         ready base-new
         incus file push "$setup" base-new/root/base-setup.sh
         incus exec base-new -- bash /root/base-setup.sh </dev/null
+        incus file push --mode 0755 /usr/local/bin/awake /usr/local/bin/chimera-agent-busy base-new/usr/local/bin/
+        incus file push -p /etc/claude-code/managed-settings.json base-new/etc/claude-code/managed-settings.json
         { secret_env claude CLAUDE_CODE_OAUTH_TOKEN; secret_env github GH_TOKEN; } \
           | incus exec base-new -- sh -c 'umask 077 && cat > /home/andre/.config/chimera/env && chown andre:andre /home/andre/.config/chimera/env'
         incus stop base-new
@@ -236,7 +238,7 @@ write_files:
       busy() {
         [ -e /home/andre/.keep-awake ] \
           || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
-          || ! flock -n -x "$dir/awake.lock" true
+          || ! flock -n -x /var/lib/chimera-awake/awake.lock true
       }
       if [ ! -e "$dir/last-busy" ] || busy; then
         touch "$dir/last-busy"
@@ -250,7 +252,7 @@ write_files:
     permissions: "0755"
     content: |
       #!/bin/sh
-      exec flock -o -s /run/chimera-idle/awake.lock "$@"
+      exec flock -o -s /var/lib/chimera-awake/awake.lock "$@"
   - path: /usr/local/bin/chimera-agent-busy
     permissions: "0755"
     content: |
@@ -272,7 +274,7 @@ write_files:
       holder="tail --pid=$pid -f /dev/null"
       if [ "$busy" = 1 ]; then
         pgrep -f "$holder" >/dev/null \
-          || setsid -f flock -o -s /run/chimera-idle/awake.lock tail --pid="$pid" -f /dev/null </dev/null >/dev/null 2>&1
+          || setsid -f flock -o -s /var/lib/chimera-awake/awake.lock tail --pid="$pid" -f /dev/null </dev/null >/dev/null 2>&1
       else
         pkill -f "$holder" || true
       fi
@@ -380,7 +382,7 @@ runcmd:
       install -d -m 700 "$keys"
       cp -p /etc/ssh/ssh_host_* "$keys"/
     fi
-  - install -d /run/chimera-idle && touch /run/chimera-idle/awake.lock
+  - install -d /run/chimera-idle /var/lib/chimera-awake && touch /var/lib/chimera-awake/awake.lock
   - systemctl daemon-reload
   - systemctl reload systemd-logind
   - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
@@ -413,4 +415,6 @@ runcmd:
         echo "chimera: Incus has no storage but $disk isn't blank, leaving it alone (see 'incus admin recover')" >&2
       fi
     fi
+    incus profile device get default awake source >/dev/null 2>&1 \
+      || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
   - systemctl try-reload-or-restart ssh

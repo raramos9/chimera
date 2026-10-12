@@ -55,7 +55,7 @@ chimera rm try-redis                          # asks you to type the name first
 
 Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use at most 1.5 GB of memory.
 
-`run` starts the command in a new tmux window inside the container and returns right away, so you can disconnect. `chimera shell NAME` attaches to that tmux. From inside the computer's own tmux, press Ctrl-b twice to reach the inner one. A command running inside a container doesn't keep the computer awake yet. For long unattended work, run `touch ~/.keep-awake` on the computer and remove that file when the work is done. The Worker still shuts everything down after 24 hours.
+`run` starts the command in a new tmux window inside the container and returns right away, so you can disconnect. `chimera shell NAME` attaches to that tmux. From inside the computer's own tmux, press Ctrl-b twice to reach the inner one. The computer stays on while a `run` command is going, even with nobody connected, and the usual 30-minute countdown starts when it ends. Inside a container, Claude and `awake` keep the computer on the same way they do outside one. The Worker still shuts everything down after 24 hours.
 
 ### Giving containers your Claude and GitHub logins
 
