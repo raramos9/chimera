@@ -71,6 +71,25 @@ The tokens are stored in `~/.config/chimera/secrets` on the computer. Every cont
 
 Containers are not backed up. Treat them as workbenches and push anything worth keeping to GitHub. Incus's own records, like which containers exist, are on `chimera-home` and are backed up.
 
+### Opening an app running in a container
+
+While the computer is awake, an app in a container opens from your laptop or phone at `http://NAME.ws:PORT`. A web server on port 8000 in a container called `api-work` is `http://api-work.ws:8000`. As with apps on the computer itself, the app has to listen on `0.0.0.0`, not only on `localhost`.
+
+One-time setup, in the Tailscale admin console:
+
+1. Under Machines, open `chimera`, choose Edit route settings, and approve the `10.171.245.0/24` route.
+2. Under DNS, add a nameserver `10.171.245.1`, turn on "Restrict to domain", and enter `ws`.
+
+On the Mac, "Use Tailscale subnets" has to be on. It already is.
+
+Good to know:
+
+- The names only work while the computer is awake. Opening a page doesn't wake it, so run `chimera wake` first.
+- `.ws` is also a real country domain. While Tailscale is on, real `.ws` websites won't load.
+- Containers can't open connections to your laptop or phone. You can still open them.
+
+`test/names.sh` checks all of this.
+
 ## Software updates
 
 Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.

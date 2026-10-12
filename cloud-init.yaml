@@ -59,6 +59,29 @@ write_files:
   - path: /etc/docker/daemon.json
     content: |
       {"ip-forward-no-drop": true}
+  - path: /etc/chimera/firewall.nft
+    content: |
+      table inet chimera
+      delete table inet chimera
+      table inet chimera {
+      	chain forward {
+      		type filter hook forward priority filter - 1; policy accept;
+      		iifname "incusbr0" oifname "tailscale0" ct state new drop
+      	}
+      }
+  - path: /etc/systemd/system/chimera-firewall.service
+    content: |
+      [Unit]
+      Description=Keep containers from opening connections to tailnet devices
+      Before=incus.service incus-startup.service tailscaled.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/chimera/firewall.nft
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /etc/systemd/system/incus.service.d/chimera.conf
     content: |
       [Unit]
@@ -97,7 +120,7 @@ write_files:
         incus config set "$name" user.chimera.parent="$from"
         if [ -n "$task" ]; then incus config set "$name" user.chimera.task="$task"; else incus config unset "$name" user.chimera.task 2>/dev/null || true; fi
         ready "$name"
-        echo "$name is ready"
+        echo "$name is ready. Apps it serves open at http://$name.ws:PORT"
       }
 
       cmd_new() {
@@ -386,6 +409,7 @@ runcmd:
   - systemctl daemon-reload
   - systemctl reload systemd-logind
   - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
+  - systemctl enable --now chimera-firewall.service
   - systemctl start incus.socket incus-user.socket incus-startup.service
   - |
     incus admin waitready --timeout 60
@@ -403,7 +427,8 @@ runcmd:
     - name: incusbr0
       type: bridge
       config:
-        ipv4.address: auto
+        ipv4.address: 10.171.245.1/24
+        dns.domain: ws
         ipv6.address: none
     profiles:
     - name: default
@@ -415,6 +440,8 @@ runcmd:
         echo "chimera: Incus has no storage but $disk isn't blank, leaving it alone (see 'incus admin recover')" >&2
       fi
     fi
+    [ "$(incus network get incusbr0 dns.domain)" = ws ] || incus network set incusbr0 dns.domain=ws
     incus profile device get default awake source >/dev/null 2>&1 \
       || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
+  - tailscale set --advertise-routes=10.171.245.0/24
   - systemctl try-reload-or-restart ssh
