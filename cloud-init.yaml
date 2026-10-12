@@ -63,6 +63,167 @@ write_files:
     content: |
       [Unit]
       RequiresMountsFor=/var/lib/incus
+  - path: /usr/local/bin/chimera
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      secrets=/home/andre/.config/chimera/secrets
+      setup=/usr/local/share/chimera/base-setup.sh
+
+      die() { echo "chimera: $*" >&2; exit 1; }
+      exists() { incus info "$1" >/dev/null 2>&1; }
+      running() { [ "$(incus list "^$1\$" -c s -f csv)" = RUNNING ]; }
+      need() { exists "$1" || die "there's no container called $1"; }
+      not_base() { [ "$1" != base ] || die "base only changes through 'chimera base'. Fork it with 'chimera new' instead."; }
+      valid() { [[ $1 =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "'$1' isn't a valid name. Use lowercase letters, digits and dashes."; }
+
+      ready() {
+        running "$1" || incus start "$1"
+        for _ in $(seq 150); do
+          incus exec "$1" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && return
+          sleep 0.2
+        done
+        die "$1 didn't get a network within 30 seconds"
+      }
+
+      copy() {
+        local from=$1 name=$2 task=${3:-}
+        valid "$name"
+        need "$from"
+        exists "$name" && die "$name already exists"
+        incus copy "$from" "$name"
+        incus config set "$name" user.chimera.parent="$from"
+        if [ -n "$task" ]; then incus config set "$name" user.chimera.task="$task"; else incus config unset "$name" user.chimera.task 2>/dev/null || true; fi
+        ready "$name"
+        echo "$name is ready"
+      }
+
+      cmd_new() {
+        [ $# -ge 1 ] || die "usage: chimera new NAME [TASK]"
+        exists base || die "there's no base container yet. Build it with 'chimera base'."
+        copy base "$1" "${2:-}"
+      }
+
+      cmd_fork() {
+        [ $# -ge 2 ] || die "usage: chimera fork FROM NAME [TASK]"
+        copy "$1" "$2" "${3:-}"
+      }
+
+      cmd_ls() {
+        incus list -c n,s,user.chimera.parent:FROM,user.chimera.task:TASK,c "$@"
+      }
+
+      cmd_run() {
+        [ $# -ge 1 ] || die "usage: chimera run NAME -- COMMAND"
+        local name=$1 script
+        shift
+        [ "${1:-}" != -- ] || shift
+        [ $# -ge 1 ] || die "usage: chimera run NAME -- COMMAND"
+        not_base "$name"
+        need "$name"
+        ready "$name"
+        script=/tmp/chimera-run-$(date +%s%N).sh
+        printf '%q ' "$@" | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
+        incus exec "$name" -- sudo -iu andre sh -c \
+          "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'bash -l $script; exec bash -l'"
+        echo "Started in $name. Watch it with 'chimera shell $name'."
+      }
+
+      cmd_shell() {
+        [ $# -ge 1 ] || die "usage: chimera shell NAME [COMMAND]"
+        local name=$1
+        shift
+        not_base "$name"
+        need "$name"
+        ready "$name"
+        if [ $# -eq 0 ]; then
+          exec incus exec "$name" -- sudo -iu andre tmux new-session -A -s main
+        fi
+        exec incus exec "$name" -- sudo -u andre -H bash -lc 'cd && exec "$@"' bash "$@"
+      }
+
+      cmd_rm() {
+        [ $# -ge 1 ] || die "usage: chimera rm NAME [--yes]"
+        local name=$1 answer
+        not_base "$name"
+        need "$name"
+        if [ "${2:-}" != --yes ]; then
+          [ -t 0 ] || die "add --yes to delete $name without a terminal"
+          read -rp "$name isn't backed up. Type its name to delete it: " answer
+          [ "$answer" = "$name" ] || die "not deleted"
+        fi
+        incus delete -f "$name"
+        echo "deleted $name"
+      }
+
+      cmd_secret() {
+        local value
+        case "${1:-}" in claude|github) ;; *) die "usage: chimera secret claude|github" ;; esac
+        if [ -t 0 ]; then read -rsp "Paste the $1 token: " value; echo; else read -r value; fi
+        [ -n "$value" ] || die "the token is empty"
+        install -d -m 700 "$secrets"
+        (umask 077 && printf '%s\n' "$value" > "$secrets/$1")
+        echo "Saved. Run 'chimera base' so new containers get it."
+      }
+
+      secret_env() {
+        local file=$secrets/$1
+        if [ -s "$file" ]; then
+          echo "export $2=$(printf %q "$(cat "$file")")"
+        else
+          echo "chimera: no $1 token yet, so new containers won't have one. Add it with 'chimera secret $1'." >&2
+        fi
+      }
+
+      cmd_base() {
+        incus delete -f base-new >/dev/null 2>&1 || true
+        incus launch images:ubuntu/24.04 base-new -c security.nesting=true -c limits.memory=1536MiB >/dev/null
+        ready base-new
+        incus file push "$setup" base-new/root/base-setup.sh
+        incus exec base-new -- bash /root/base-setup.sh </dev/null
+        { secret_env claude CLAUDE_CODE_OAUTH_TOKEN; secret_env github GH_TOKEN; } \
+          | incus exec base-new -- sh -c 'umask 077 && cat > /home/andre/.config/chimera/env && chown andre:andre /home/andre/.config/chimera/env'
+        incus stop base-new
+        incus delete -f base >/dev/null 2>&1 || true
+        incus move base-new base
+        echo "base is ready. New containers start from it."
+      }
+
+      cmd=${1:-}
+      shift || true
+      case "$cmd" in
+        new|fork|ls|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
+        *) die "usage: chimera new|fork|ls|run|shell|rm|secret|base" ;;
+      esac
+  - path: /usr/local/share/chimera/base-setup.sh
+    content: |
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      usermod -l andre -d /home/andre -m ubuntu
+      groupmod -n andre ubuntu
+      sed -i 's/^ubuntu /andre /' /etc/sudoers.d/*
+
+      install -d -m 755 /etc/apt/keyrings
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
+      echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+      apt-get update -q
+      apt-get install -yq git tmux curl ca-certificates jq ripgrep build-essential docker.io gh
+      apt-get clean
+      usermod -aG docker andre
+
+      sudo -iu andre bash <<'EOF'
+      set -euo pipefail
+      curl -fsSL https://claude.ai/install.sh | bash
+      [ -e ~/.claude.json ] || echo '{"hasCompletedOnboarding": true}' > ~/.claude.json
+      install -d -m 700 ~/.config/chimera
+      echo '[ -f ~/.config/chimera/env ] && . ~/.config/chimera/env' >> ~/.profile
+      git config --global user.name "Andre Ramos"
+      git config --global user.email ralphandrer04@gmail.com
+      git config --global credential.https://github.com.helper '!gh auth git-credential'
+      EOF
   - path: /usr/local/bin/chimera-idle-check
     permissions: "0755"
     content: |

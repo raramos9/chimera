@@ -41,18 +41,33 @@ The agent runs as `andre`, who has full admin rights. Backups (below) are the sa
 
 ## Containers
 
-The computer runs Incus, which makes small separate Linux computers (containers) inside it, one per agent or task. They live on a second disk, `chimera-machines`, and survive sleep. A container that was running when the computer went to sleep starts again on wake.
+Each agent or task can get its own small Linux computer, a container, inside the computer. Containers live on a second disk, `chimera-machines`, and survive sleep. A container that was running when the computer went to sleep starts again on wake. Manage them from the laptop, or from the phone in Termius, where the same commands work:
 
 ```
-incus launch images:ubuntu/24.04 api-work    # a fresh container
-incus copy api-work try-redis                 # an instant copy to try another idea
-incus start try-redis
-incus exec try-redis -- bash                  # a shell inside it
-incus list
-incus delete -f try-redis
+chimera new api-work "add rate limiting"     # a fresh container, with an optional note
+chimera run api-work -- claude -p "add rate limiting to the API"
+chimera fork api-work try-redis               # an instant copy to try another idea
+chimera ls                                    # what exists, what each came from, its note
+chimera shell try-redis                       # a terminal inside it, in tmux
+chimera shell try-redis git log               # or one command
+chimera rm try-redis                          # asks you to type the name first
 ```
 
-A copy takes well under a second and shares disk space with the original until either one changes. For Docker inside a container, launch it with `-c security.nesting=true`.
+Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use at most 1.5 GB of memory.
+
+`run` starts the command in a new tmux window inside the container and returns right away, so you can disconnect. `chimera shell NAME` attaches to that tmux. From inside the computer's own tmux, press Ctrl-b twice to reach the inner one. A command running inside a container doesn't keep the computer awake yet. For long unattended work, run `touch ~/.keep-awake` on the computer and remove that file when the work is done. The Worker still shuts everything down after 24 hours.
+
+### Giving containers your Claude and GitHub logins
+
+Both logins go into `base`, so every container made after that has them.
+
+1. On the computer, run `claude setup-token`. It signs in through the browser and prints a token that lasts a year. Copy it, then run `chimera secret claude` and paste it.
+2. On GitHub, go to Settings, Developer settings, Personal access tokens, Fine-grained tokens. Make a token for only the repositories agents should touch, with read and write access to Contents and Pull requests. Run `chimera secret github` and paste it.
+3. Run `chimera base` to rebuild `base` with them. Containers you already have keep what they had.
+
+The tokens are stored in `~/.config/chimera/secrets` on the computer. Every container can read them, so anything running in a container could use them. Revoke them on claude.ai or GitHub if that ever worries you.
+
+`chimera base` also picks up changes to what's installed in `base`, which is listed in `/usr/local/share/chimera/base-setup.sh` (from `cloud-init.yaml`). It takes about 90 seconds.
 
 Containers are not backed up. Treat them as workbenches and push anything worth keeping to GitHub. Incus's own records, like which containers exist, are on `chimera-home` and are backed up.
 

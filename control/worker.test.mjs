@@ -46,6 +46,10 @@ globalThis.fetch = async (url, init) => {
 
 const { default: worker } = await import("./worker.js");
 
+const cloudInitBytes = fs.statSync(fileURLToPath(new URL("../cloud-init.yaml", import.meta.url))).size;
+assert.ok(cloudInitBytes <= 32 * 1024, `cloud-init.yaml is ${cloudInitBytes} bytes, over Hetzner's 32 KiB user data limit`);
+console.log("PASS: cloud-init.yaml fits in Hetzner's user data limit");
+
 async function run(label, servers, check) {
   calls.length = 0;
   list = () => new Response(JSON.stringify({ servers }));
