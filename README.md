@@ -39,6 +39,23 @@ The computer stays on while Claude is working, including background tasks it sta
 
 The agent runs as `andre`, who has full admin rights. Backups (below) are the safety net.
 
+## Containers
+
+The computer runs Incus, which makes small separate Linux computers (containers) inside it, one per agent or task. They live on a second disk, `chimera-machines`, and survive sleep. A container that was running when the computer went to sleep starts again on wake.
+
+```
+incus launch images:ubuntu/24.04 api-work    # a fresh container
+incus copy api-work try-redis                 # an instant copy to try another idea
+incus start try-redis
+incus exec try-redis -- bash                  # a shell inside it
+incus list
+incus delete -f try-redis
+```
+
+A copy takes well under a second and shares disk space with the original until either one changes. For Docker inside a container, launch it with `-c security.nesting=true`.
+
+Containers are not backed up. Treat them as workbenches and push anything worth keeping to GitHub. Incus's own records, like which containers exist, are on `chimera-home` and are backed up.
+
 ## Software updates
 
 Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.
@@ -72,4 +89,4 @@ The first command lists every backup with its time. Put a backup's ID in place o
 
 The R2 key and backup password live in `~/.config/chimera/backup.env` and `~/.config/chimera/backup-password` on the laptop, and on the volume in `/home/.chimera/backup/`. If you change either one, run `bin/chimera backup-keys` from the laptop to copy them over.
 
-If the volume is ever lost, make a new one in `hil` with the same name, `chimera-home`. Everything finds the volume by that name, so no code changes. Then run `bin/chimera restore` from the laptop while the computer is asleep. It wakes the computer onto the blank volume, briefly opens public SSH, puts the latest backup back on `/home`, and restarts it so it rejoins Tailscale as `chimera` with its old SSH fingerprint. It refuses to run if the volume isn't blank. Anything changed after the last backup is lost. Docker volumes come back, but containers don't. Run `docker compose up -d` in each project folder to start them again, and images download as needed.
+If the volume is ever lost, make a new one in `hil` with the same name, `chimera-home`. Everything finds the volume by that name, so no code changes. The computer won't start without `chimera-machines` too. If that disk is lost, make a new 20 GB one with that name. Its containers are gone, since they aren't backed up, and Incus still remembers the old disk, so its storage has to be set up again by hand. Then run `bin/chimera restore` from the laptop while the computer is asleep. It wakes the computer onto the blank volume, briefly opens public SSH, puts the latest backup back on `/home`, and restarts it so it rejoins Tailscale as `chimera` with its old SSH fingerprint. It refuses to run if the volume isn't blank. Anything changed after the last backup is lost. Docker volumes come back, but containers don't. Run `docker compose up -d` in each project folder to start them again, and images download as needed.

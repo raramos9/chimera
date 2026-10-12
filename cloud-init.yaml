@@ -4,7 +4,7 @@ users:
   - name: andre
     uid: 1000
     shell: /bin/bash
-    groups: [sudo, docker]
+    groups: [sudo, docker, incus-admin]
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     lock_passwd: true
     ssh_authorized_keys:
@@ -20,21 +20,26 @@ bootcmd:
     set -eu
     keys=/home/.chimera/ssh-host-keys
 
+    blank() { rc=0; blkid -p "$1" >/dev/null || rc=$?; [ "$rc" -eq 2 ]; }
+
     for _ in $(seq 60); do
       set -- /dev/disk/by-id/scsi-0HC_Volume_*
-      [ -e "$1" ] && break
+      [ $# -eq 2 ] && break
       sleep 1
     done
-    [ -e "$1" ] || { echo "chimera: the volume never appeared" >&2; exit 1; }
-    [ $# -eq 1 ] || { echo "chimera: expected one volume, found $*" >&2; exit 1; }
-    dev=$1
+    [ $# -eq 2 ] || { echo "chimera: expected two volumes (chimera-home, chimera-machines), found $*" >&2; exit 1; }
 
-    if ! mountpoint -q /home; then
-      rc=0; blkid -p "$dev" >/dev/null || rc=$?
-      if [ "$rc" -eq 2 ]; then mkfs.ext4 "$dev"; fi
-      mount "$dev" /home
+    home=$(blkid -L chimera-home || true)
+    if [ -z "$home" ]; then
+      for d; do blank "$d" || continue; [ -z "$home" ] || { echo "chimera: both volumes are blank, can't tell which is /home" >&2; exit 1; }; home=$d; done
+      [ -n "$home" ] || { echo "chimera: no volume is labelled chimera-home and none is blank" >&2; exit 1; }
+      mkfs.ext4 -L chimera-home "$home"
     fi
-    resize2fs "$dev" || echo "chimera: couldn't grow /home to the volume size" >&2
+    for d; do [ "$(readlink -f "$d")" = "$(readlink -f "$home")" ] || machines=$d; done
+    install -d /run/chimera && echo "$machines" > /run/chimera/machines-disk
+
+    mountpoint -q /home || mount "$home" /home
+    resize2fs "$home" || echo "chimera: couldn't grow /home to the volume size" >&2
 
     rm -f /etc/ssh/ssh_host_*
     if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
@@ -46,8 +51,18 @@ bootcmd:
     mountpoint -q /var/lib/docker || mount --bind /home/.chimera/docker /var/lib/docker
     install -d -m 711 /home/.chimera/containerd /var/lib/containerd
     mountpoint -q /var/lib/containerd || mount --bind /home/.chimera/containerd /var/lib/containerd
+    install -d -m 711 /home/.chimera/incus /var/lib/incus
+    mountpoint -q /var/lib/incus || mount --bind /home/.chimera/incus /var/lib/incus
 
 write_files:
+  # Docker otherwise sets the kernel's forwarding policy to drop, which cuts Incus containers off the internet.
+  - path: /etc/docker/daemon.json
+    content: |
+      {"ip-forward-no-drop": true}
+  - path: /etc/systemd/system/incus.service.d/chimera.conf
+    content: |
+      [Unit]
+      RequiresMountsFor=/var/lib/incus
   - path: /usr/local/bin/chimera-idle-check
     permissions: "0755"
     content: |
@@ -130,8 +145,9 @@ write_files:
         echo "chimera: no backup keys on the volume, skipping backup"
         exit 0
       fi
-      exec flock /run/chimera-backup.lock /usr/local/bin/chimera-restic backup /home --host chimera \
+      exec flock /run/chimera-backup.lock /usr/local/bin/chimera-restic backup /home --host chimera --one-file-system \
         --exclude /home/.chimera/backup \
+        --exclude /home/.chimera/incus/images \
         --exclude /home/.chimera/containerd \
         --exclude '/home/.chimera/docker/*' \
         --exclude '!/home/.chimera/docker/volumes' \
@@ -207,4 +223,33 @@ runcmd:
   - systemctl daemon-reload
   - systemctl reload systemd-logind
   - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
+  - systemctl start incus.socket incus-user.socket incus-startup.service
+  - |
+    incus admin waitready --timeout 60
+    if ! incus storage show default >/dev/null 2>&1; then
+      disk=$(cat /run/chimera/machines-disk)
+      rc=0; blkid -p "$disk" >/dev/null || rc=$?
+      if [ "$rc" -eq 2 ]; then
+        incus admin init --preseed <<EOF
+    storage_pools:
+    - name: default
+      driver: btrfs
+      config:
+        source: $disk
+    networks:
+    - name: incusbr0
+      type: bridge
+      config:
+        ipv4.address: auto
+        ipv6.address: none
+    profiles:
+    - name: default
+      devices:
+        root: {path: /, pool: default, type: disk}
+        eth0: {name: eth0, network: incusbr0, type: nic}
+    EOF
+      else
+        echo "chimera: Incus has no storage but $disk isn't blank, leaving it alone (see 'incus admin recover')" >&2
+      fi
+    fi
   - systemctl try-reload-or-restart ssh

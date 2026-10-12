@@ -9,7 +9,7 @@ image_label=chimera=base
 ssh_key=laptop
 primary_ip=chimera-ip
 firewall=chimera-firewall
-volume=chimera-home
+volumes=(chimera-home chimera-machines)
 user=andre
 cloud_init="$(dirname "$0")/../cloud-init.yaml"
 image_init="$(dirname "$0")/../image.yaml"
@@ -67,7 +67,7 @@ create_server() {
   [ -n "$image" ] || { echo "There's no chimera image yet. Build one with 'chimera build-image'." >&2; exit 1; }
   hcloud server create --name "$name" --type "$server_type" --image "$image" \
     --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
-    --volume "$volume" --user-data-from-file "$@"
+    "${volumes[@]/#/--volume=}" --user-data-from-file "$@"
 }
 
 cmd_wake() {
@@ -148,7 +148,7 @@ cmd_restore() {
   echo "Copying backup keys..."
   push_backup_keys "${public[@]}"
   echo "Restoring /home from the latest backup..."
-  "${public[@]}" "sudo systemctl stop docker.socket docker containerd tailscaled && sudo chimera-restic restore latest --target / --exclude /home/.chimera/docker/volumes/backingFsBlockDev"
+  "${public[@]}" "sudo systemctl stop docker.socket docker containerd tailscaled incus-startup incus incus.socket incus-user.socket && sudo chimera-restic restore latest --target / --exclude /home/.chimera/docker/volumes/backingFsBlockDev"
   echo "Restarting so it picks up its old Tailscale login and SSH fingerprint..."
   "${public[@]}" "sudo systemctl reboot" || true
   sleep 15

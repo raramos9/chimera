@@ -7,12 +7,26 @@ packages: [restic]
 runcmd:
   - curl -fsSL https://tailscale.com/install.sh | sh
   - curl -fsSL https://get.docker.com | sh
+  - curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
+  - |
+    cat > /etc/apt/sources.list.d/zabbly-incus-stable.sources <<EOF
+    Enabled: yes
+    Types: deb
+    URIs: https://pkgs.zabbly.com/incus/stable
+    Suites: noble
+    Components: main
+    Architectures: amd64
+    Signed-By: /etc/apt/keyrings/zabbly.asc
+    EOF
+  - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y incus
   # Powers off only if everything installed. The Worker saves a powered-off build server as the new image.
+  # Incus stays off until cloud-init has put /var/lib/incus on the volume, or its socket lands on the boot disk.
   - |
     systemd-run --unit chimera-seal sh -c '
       cloud-init status --wait >/dev/null \
-        && command -v restic && command -v tailscale && command -v docker \
+        && command -v restic && command -v tailscale && command -v docker && command -v incus \
         && systemctl stop tailscaled docker docker.socket containerd \
-        && rm -rf /var/lib/tailscale/* /var/lib/docker/* /var/lib/containerd/* /etc/ssh/ssh_host_* \
+        && systemctl disable --now incus-startup.service incus.service incus.socket incus-user.service incus-user.socket \
+        && rm -rf /var/lib/tailscale/* /var/lib/docker/* /var/lib/containerd/* /var/lib/incus/* /etc/ssh/ssh_host_* \
         && cloud-init clean --logs --machine-id \
         && sync && systemctl poweroff'
