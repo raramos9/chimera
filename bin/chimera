@@ -19,7 +19,7 @@ server_status() {
 }
 
 ssh_answers() {
-  ssh -o BatchMode=yes -o ConnectTimeout=5 "$user@$name" true 2>/dev/null
+  ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none "$user@$name" true 2>/dev/null
 }
 
 cmd_status() {
@@ -71,28 +71,26 @@ create_server() {
 }
 
 cmd_wake() {
-  local status
-  status=$(server_status)
-  if [ "$status" = off ]; then
-    hcloud server delete "$name" || true
-    status=$(server_status)
-  fi
-  case "$status" in
-    "")
-      create_server "$cloud_init" --firewall "$firewall"
-      ;;
-    stopping|deleting)
-      echo "The computer is still going to sleep. Run 'chimera wake' again in a minute." >&2
-      exit 1
-      ;;
-  esac
-  echo "Waiting for SSH on $name over Tailscale..."
-  for _ in $(seq 60); do
-    if ssh_answers; then echo awake; return; fi
+  local deadline=$((SECONDS + 900)) waiting=
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    case "$(server_status)" in
+      "") create_server "$cloud_init" --firewall "$firewall" ;;
+      off) hcloud server delete "$name" || true ;;
+      running) ssh_answers && { echo awake; return; } ;;
+    esac
+    [ -n "$waiting" ] || { echo "Waiting for SSH on $name over Tailscale..."; waiting=1; }
     sleep 3
   done
-  echo "SSH didn't answer within 3 minutes. Run 'ssh $user@$name' to see the error." >&2
+  echo "SSH didn't answer within 15 minutes. Run 'chimera status' to see what it's doing." >&2
   exit 1
+}
+
+cmd_connect() {
+  if ! nc -z -G 2 "$name" 22 2>/dev/null; then
+    echo "Waking $name..." >&2
+    cmd_wake </dev/null >&2
+  fi
+  exec nc "$name" 22
 }
 
 push_backup_keys() {
@@ -185,9 +183,10 @@ cmd_build_image() {
 case "${1:-}" in
   sleep) cmd_sleep ;;
   wake) cmd_wake ;;
+  connect) cmd_connect ;;
   status) cmd_status ;;
   backup-keys) cmd_backup_keys ;;
   restore) cmd_restore ;;
   build-image) cmd_build_image ;;
-  *) echo "usage: chimera sleep|wake|status|backup-keys|restore|build-image" >&2; exit 2 ;;
+  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|restore|build-image" >&2; exit 2 ;;
 esac

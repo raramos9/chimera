@@ -4,6 +4,18 @@ A personal Linux computer in the cloud. It sleeps when nobody is using it and wa
 
 You reach it as `andre@chimera` over Tailscale. The public internet can't reach it at all.
 
+## Waking by connecting
+
+On the laptop, `ssh chimera` wakes the computer if it's asleep, waits about 30 seconds, and connects. If it's in the middle of going to sleep, it waits for the backup to finish and wakes it again. Anything else that uses SSH, like `scp` or VS Code's remote editing, does the same. This needs three lines in `~/.ssh/config`:
+
+```
+Host chimera
+  User andre
+  ProxyCommand ~/Projects/active/chimera/bin/chimera connect
+```
+
+An accidental `ssh chimera` keeps the computer on for the usual 30 idle minutes.
+
 ## Opening an app running on the computer
 
 Anything listening on the computer opens from your laptop or phone at `http://chimera:<port>`. For example, a dev server on port 3000 is `http://chimera:3000`.
