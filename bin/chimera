@@ -11,6 +11,7 @@ primary_ip=chimera-ip
 firewall=chimera-firewall
 volumes=(chimera-home chimera-machines)
 user=andre
+config=~/.config/chimera
 cloud_init="$(dirname "$0")/../cloud-init.yaml"
 image_init="$(dirname "$0")/../image.yaml"
 
@@ -22,23 +23,83 @@ ssh_answers() {
   ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none "$user@$name" true 2>/dev/null
 }
 
+control() {
+  local method=$1 path=$2 url
+  shift 2
+  url=$(cat "$config/wake-url")
+  printf 'Authorization: Bearer %s\n' "$(tr -d '\n' < "$config/wake-token")" \
+    | curl -fsS --max-time 10 -X "$method" -H @- "$@" "${url%/wake}$path"
+}
+
+want() { control POST /want --max-time 5 -d "$1" >/dev/null 2>&1 || true; }
+
+plural() { if [ "$1" = 1 ]; then echo "$1 $2"; else echo "$1 ${2}s"; fi; }
+
+ago() {
+  if [ "$1" -lt 60 ]; then echo "$(plural "$1" second) ago"
+  elif [ "$1" -lt 3600 ]; then echo "$(($1 / 60)) min ago"
+  else echo "$(plural $(($1 / 3600)) hour) ago"; fi
+}
+
+read_state() {
+  control GET /state 2>/dev/null || { echo "Couldn't reach the Worker." >&2; exit 1; }
+}
+
+report_age() {
+  local seconds
+  seconds=$(jq -r '.reportAgeSeconds // empty' <<<"$1")
+  if [ -n "$seconds" ]; then echo "Last report $(ago "$seconds")."; else echo "No report yet."; fi
+}
+
 cmd_status() {
-  local status
-  status=$(server_status)
-  if [ -n "$status" ] && ! hcloud server describe "$name" -o json | jq -e '.public_net.firewalls | length > 0' >/dev/null; then
+  local info
+  info=$(read_state)
+  if jq -e '.server != null and .server.firewalls == 0' <<<"$info" >/dev/null; then
     echo "Warning: public SSH is open. Close it with: hcloud firewall apply-to-resource $firewall --type server --server $name" >&2
   fi
-  case "$status" in
-    "") echo asleep ;;
-    running) if ssh_answers; then echo awake; else echo waking; fi ;;
-    initializing|starting) echo waking ;;
-    stopping|off|deleting) echo going-to-sleep ;;
-    *) echo "unknown ($status)" ;;
-  esac
+  jq -r .state <<<"$info"
+  echo "$(report_age "$info")$(jq -r 'if .busy == true then " An agent was working." else "" end' <<<"$info")"
+}
+
+work_notes() {
+  local w=$1 who count
+  who=$(jq -r .name <<<"$w")
+  count=$(jq '.work.unpushed | length' <<<"$w")
+  if [ "$count" != 0 ]; then
+    echo "$who: $(plural "$count" commit) not on GitHub"
+    jq -r '.work.unpushed[] | "  " + .' <<<"$w"
+  fi
+  count=$(jq '.work.uncommitted | length' <<<"$w")
+  if [ "$count" != 0 ]; then
+    echo "$who: $(plural "$count" "uncommitted file")"
+    jq -r '.work.uncommitted[] | "  " + .' <<<"$w"
+  fi
+  if jq -e '.work.error != null' <<<"$w" >/dev/null; then echo "$who: $(jq -r .work.error <<<"$w")"; fi
+}
+
+cmd_ls() {
+  [ $# -eq 0 ] || { echo "usage: chimera ls" >&2; exit 2; }
+  local info w notes seconds checked
+  info=$(read_state)
+  echo "Computer $(jq -r .state <<<"$info"). $(report_age "$info")"
+  if jq -e '.workspaces | length == 0' <<<"$info" >/dev/null; then echo "No containers."; return; fi
+  jq -r '(["NAME", "STATE", "FROM", "TASK", "REPO", "BRANCH"] | @tsv),
+    (.workspaces[] | [.name, .state, .parent // "-", .task // "-", .repo // "-", .branch // "-"] | @tsv)' <<<"$info" \
+    | column -t -s $'\t'
+  seconds=$(jq -r '.reportAgeSeconds // empty' <<<"$info")
+  while IFS= read -r w; do
+    notes=$(work_notes "$w")
+    [ -n "$notes" ] || continue
+    echo
+    echo "$notes"
+    checked=$(jq -r '.work.checkAgeSeconds // empty' <<<"$w")
+    if [ -n "$checked" ] && [ -n "$seconds" ] && [ "$checked" -gt "$seconds" ]; then echo "(checked $(ago "$checked"))"; fi
+  done < <(jq -c '.workspaces[] | select(.work != null)' <<<"$info")
 }
 
 cmd_sleep() {
   local status
+  want asleep
   status=$(server_status)
   if [ "$status" = running ]; then
     hcloud server shutdown "$name"
@@ -76,7 +137,7 @@ cmd_wake() {
     case "$(server_status)" in
       "") create_server "$cloud_init" --firewall "$firewall" ;;
       off) hcloud server delete "$name" || true ;;
-      running) ssh_answers && { echo awake; return; } ;;
+      running) ssh_answers && { want awake; echo awake; return; } ;;
     esac
     [ -n "$waiting" ] || { echo "Waiting for SSH on $name over Tailscale..."; waiting=1; }
     sleep 3
@@ -94,7 +155,7 @@ cmd_connect() {
 }
 
 push_backup_keys() {
-  local config=~/.config/chimera dir=/home/.chimera/backup
+  local dir=/home/.chimera/backup
   "$@" "sudo install -d -m 700 $dir && sudo sh -c 'umask 077 && cat > $dir/env'" < "$config/backup.env"
   "$@" "sudo sh -c 'umask 077 && cat > $dir/password'" < "$config/backup-password"
   "$@" "sudo chimera-restic cat config >/dev/null 2>&1 || sudo chimera-restic init"
@@ -103,6 +164,16 @@ push_backup_keys() {
 cmd_backup_keys() {
   push_backup_keys ssh "$user@$name"
   echo "backup keys are on the volume"
+}
+
+cmd_agent_key() {
+  local file=$config/agent-token
+  if [ ! -e "$file" ]; then
+    mkdir -p "$config"
+    (umask 077 && printf '%s' "$(openssl rand -hex 32)" > "$file")
+  fi
+  ssh "$user@$name" "sudo sh -c 'umask 077 && cat > /home/.chimera/agent-token'" < "$file"
+  echo "Now run in control/: npx wrangler secret put AGENT_TOKEN < ~/.config/chimera/agent-token"
 }
 
 close_public_ssh() {
@@ -193,8 +264,10 @@ case "${1:-}" in
   connect) cmd_connect ;;
   status) cmd_status ;;
   backup-keys) cmd_backup_keys ;;
+  agent-key) cmd_agent_key ;;
   restore) cmd_restore ;;
   build-image) cmd_build_image ;;
-  new|fork|ls|results|run|shell|rm|secret|base) cmd_forward "$@" ;;
-  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|restore|build-image|new|fork|ls|results|run|shell|rm|secret|base" >&2; exit 2 ;;
+  ls) shift; cmd_ls "$@" ;;
+  new|fork|results|run|shell|rm|secret|base) cmd_forward "$@" ;;
+  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|agent-key|restore|build-image|new|fork|ls|results|run|shell|rm|secret|base" >&2; exit 2 ;;
 esac

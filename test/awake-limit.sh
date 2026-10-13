@@ -36,7 +36,7 @@ while [ $(( $(date +%s) - woke )) -lt $((force_after * 60)) ]; do
   if [ -z "$status" ]; then
     elapsed=$(( ($(date +%s) - woke) / 60 ))
     [ "$elapsed" -ge "$limit" ] || fail "server was deleted after $elapsed minutes, before the $limit-minute limit"
-    [ "$("$chimera" status)" = asleep ] || fail "computer is not asleep"
+    [ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep"
     hcloud volume describe chimera-home >/dev/null || fail "volume was deleted"
     "$chimera" wake
     [ "$(remote "sudo chimera-restic dump latest /home/andre/backup-test")" = "$token" ] \

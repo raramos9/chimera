@@ -27,6 +27,6 @@ done
 hcloud volume describe chimera-home >/dev/null || fail "volume was deleted"
 hcloud primary-ip describe chimera-ip >/dev/null || fail "primary IP was deleted"
 
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after cleanup"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after cleanup"
 
 echo "PASS: cleanup worker deleted the powered-off server and kept the volume and address"

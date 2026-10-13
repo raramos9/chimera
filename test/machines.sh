@@ -5,10 +5,11 @@ chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
 
 "$chimera" sleep
 "$chimera" wake
-for _ in $(seq 60); do c ls >/dev/null 2>&1 && break; sleep 3; done
+for _ in $(seq 60); do remote "incus list" >/dev/null 2>&1 && break; sleep 3; done
 
 c rm m-test --yes >/dev/null 2>&1 || true
 c rm m-test-fork --yes >/dev/null 2>&1 || true
@@ -19,7 +20,7 @@ base_seconds=$(( $(date +%s) - start ))
 
 c new m-test "the machines test" >/dev/null
 c fork m-test m-test-fork >/dev/null
-listing=$(c ls -f csv)
+listing=$(remote "chimera ls -f csv")
 grep -q '^m-test-fork,RUNNING,m-test,,' <<<"$listing" || fail "ls doesn't show m-test-fork forked from m-test: $listing"
 grep -q '^m-test,RUNNING,base,the machines test,' <<<"$listing" || fail "ls doesn't show m-test's origin and task: $listing"
 
@@ -40,7 +41,7 @@ c shell m-test docker run --rm hello-world | grep -q 'Hello from Docker' || fail
 
 c rm m-test-fork --yes >/dev/null
 c rm m-test --yes >/dev/null
-! grep -q m-test <<<"$(c ls)" || fail "rm left a container behind"
+! grep -q m-test <<<"$(remote "chimera ls")" || fail "rm left a container behind"
 
 echo "Timing: chimera base took ${base_seconds}s"
 echo "PASS: base, new, fork, ls, run, shell and rm work from the laptop after a wake"

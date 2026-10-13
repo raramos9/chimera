@@ -36,6 +36,6 @@ done
 [ -n "$off" ] || fail "did not power off after 2 idle minutes"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 
 echo "PASS: powered off when idle, stayed on with keep-awake"

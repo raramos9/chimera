@@ -43,7 +43,7 @@ public_ip=$(hcloud server ip chimera)
 ! curl -ksS --max-time 5 "https://$public_ip/" >/dev/null 2>&1 || fail "port 443 is open on the public address"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 wake_until_docker
 
 wait_for http://chimera:8080/ "$token"

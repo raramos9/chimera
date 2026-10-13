@@ -6,6 +6,7 @@ repo=raramos9/chimera-test
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
 drop_branch() { gh api -X DELETE "repos/$repo/git/refs/heads/chimera/$1" >/dev/null 2>&1 || true; }
 
 cleanup() {
@@ -19,15 +20,15 @@ trap cleanup EXIT
 
 "$chimera" sleep
 "$chimera" wake
-for _ in $(seq 60); do c ls >/dev/null 2>&1 && break; sleep 3; done
+for _ in $(seq 60); do remote "incus list" >/dev/null 2>&1 && break; sleep 3; done
 
 cleanup
 
 ! c new c-bad "x" --repo raramos9/does-not-exist-xyz >/dev/null 2>&1 || fail "new succeeded for a repo that doesn't exist"
-! grep -q c-bad <<<"$(c ls)" || fail "a failed new left c-bad behind"
+! grep -q c-bad <<<"$(remote "chimera ls")" || fail "a failed new left c-bad behind"
 
 c new c-res "results test" --repo "$repo" >/dev/null
-listing=$(c ls -f csv)
+listing=$(remote "chimera ls -f csv")
 grep -q "^c-res,RUNNING,base,results test,$repo,chimera/c-res," <<<"$listing" || fail "ls doesn't show c-res with its repo and branch: $listing"
 
 [ "$(c shell c-res pwd)" = /home/andre/chimera-test ] || fail "shell doesn't start in the repo checkout"
@@ -52,7 +53,7 @@ c shell c-res true || fail "rm with an unpushed commit removed the container any
 
 c fork c-res c-res-fork >/dev/null
 [ "$(c shell c-res-fork git branch --show-current)" = chimera/c-res-fork ] || fail "fork didn't put the copy on its own branch"
-grep -q "^c-res-fork,RUNNING,c-res,,$repo,chimera/c-res-fork," <<<"$(c ls -f csv)" || fail "ls doesn't show the fork's repo and branch"
+grep -q "^c-res-fork,RUNNING,c-res,,$repo,chimera/c-res-fork," <<<"$(remote "chimera ls -f csv")" || fail "ls doesn't show the fork's repo and branch"
 [ "$(c shell c-res-fork git log -1 --format=%s)" = "add note" ] || fail "the fork didn't keep the parent's commit"
 
 c shell c-res git push -q -u origin chimera/c-res
@@ -63,7 +64,7 @@ c shell c-res-fork sh -c 'echo more >> note.txt'
 ! c rm c-res-fork --yes >/dev/null 2>&1 || fail "rm deleted a fork with uncommitted changes"
 c rm c-res-fork --force >/dev/null || fail "rm --force didn't delete a dirty fork"
 
-listing=$(c ls)
+listing=$(remote "chimera ls")
 ! grep -q 'c-res' <<<"$listing" || fail "a container is still listed: $listing"
 drop_branch c-res
 

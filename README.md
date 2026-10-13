@@ -100,6 +100,21 @@ Good to know:
 
 `test/names.sh` checks all of this.
 
+## Checking on things while it sleeps
+
+`chimera status` and `chimera ls` on the laptop don't wake the computer. They ask the Worker, which remembers the last report the computer sent. The computer sends one every 2 minutes, when it boots, and just before it shuts down. Both commands say how old the information is, for example `Computer asleep. Last report 40 min ago.` `ls` also lists commits that aren't on GitHub and uncommitted files, with how long ago they were checked. A container that is stopped keeps its last check.
+
+Line 1 of `chimera status` is `asleep`, `waking`, `awake` or `going-to-sleep`. Line 2 is the report age, and says so if an agent was working at the time.
+
+Set this up once. `chimera agent-key` makes a password for the computer, copies it to the computer's disk, and prints the last step:
+
+```
+chimera agent-key
+cd control && npx wrangler secret put AGENT_TOKEN < ~/.config/chimera/agent-token
+```
+
+Until both are done, the computer skips its reports and `status` says `No report yet.`
+
 ## Software updates
 
 Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.

@@ -96,6 +96,7 @@ write_files:
 
       secrets=/home/andre/.config/chimera/secrets
       setup=/usr/local/share/chimera/base-setup.sh
+      report=/usr/local/share/chimera/report.py
 
       die() { echo "chimera: $*" >&2; exit 1; }
       exists() { incus info "$1" >/dev/null 2>&1; }
@@ -198,6 +199,23 @@ write_files:
 
       cmd_ls() {
         incus list -c n,s,user.chimera.parent:FROM,user.chimera.task:TASK,user.chimera.repo:REPO,user.chimera.branch:BRANCH,c "$@"
+      }
+
+      cmd_report() {
+        local dir json name rc busy=false
+        dir=$(mktemp -d)
+        trap "rm -rf '$dir'" EXIT
+        if ! flock -n -x /var/lib/chimera-awake/awake.lock true; then busy=true; fi
+        json=$(incus list -f json)
+        for name in $(python3 "$report" names <<<"$json"); do
+          rc=0
+          lost_dirty= lost_unpushed=
+          lost_work "$name" </dev/null >/dev/null || rc=$?
+          printf '%s' "$lost_unpushed" > "$dir/$name.unpushed"
+          printf '%s' "$lost_dirty" > "$dir/$name.uncommitted"
+          echo "$rc" > "$dir/$name.rc"
+        done
+        python3 "$report" build "$dir" "$busy" <<<"$json"
       }
 
       cmd_results() {
@@ -332,8 +350,8 @@ write_files:
       cmd=${1:-}
       shift || true
       case "$cmd" in
-        new|fork|ls|results|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
-        *) die "usage: chimera new|fork|ls|results|run|shell|rm|secret|base" ;;
+        new|fork|ls|results|report|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
+        *) die "usage: chimera new|fork|ls|results|report|run|shell|rm|secret|base" ;;
       esac
   - path: /usr/local/share/chimera/base-setup.sh
     content: |
@@ -362,6 +380,100 @@ write_files:
       git config --global user.email ralphandrer04@gmail.com
       git config --global credential.https://github.com.helper '!gh auth git-credential'
       EOF
+  - path: /usr/local/share/chimera/report.py
+    content: |
+      import json, sys
+
+      def lines(path):
+          try:
+              with open(path) as f:
+                  return f.read().splitlines()
+          except OSError:
+              return None
+
+      def meta(container, key):
+          return container["config"].get("user.chimera." + key) or None
+
+      def work(directory, name):
+          rc = lines(f"{directory}/{name}.rc")
+          if rc is None:
+              return None
+          return {
+              "unpushed": lines(f"{directory}/{name}.unpushed") or [],
+              "uncommitted": lines(f"{directory}/{name}.uncommitted") or [],
+              "error": "couldn't reach GitHub" if rc == ["2"] else None,
+          }
+
+      def workspace(directory, container):
+          return {
+              "name": container["name"],
+              "state": container["status"].lower(),
+              "parent": meta(container, "parent"),
+              "task": meta(container, "task"),
+              "repo": meta(container, "repo"),
+              "branch": meta(container, "branch"),
+              "work": work(directory, container["name"]),
+          }
+
+      containers = [c for c in json.load(sys.stdin) if c["name"] != "base"]
+      if sys.argv[1] == "names":
+          print("\n".join(c["name"] for c in containers if c["status"] == "Running" and meta(c, "repo")))
+      else:
+          directory, busy = sys.argv[2], sys.argv[3] == "true"
+          print(json.dumps({"busy": busy, "workspaces": [workspace(directory, c) for c in containers]}))
+  - path: /usr/local/bin/chimera-agent
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      token=/home/.chimera/agent-token
+      if [ ! -s "$token" ]; then
+        echo "chimera-agent: no token yet, skipping report"
+        exit 0
+      fi
+      umask 077
+      dir=$(mktemp -d)
+      trap 'rm -rf "$dir"' EXIT
+      printf 'Authorization: Bearer %s\n' "$(cat "$token")" > "$dir/header"
+      chimera report > "$dir/report.json"
+      curl -fsS --max-time 60 -H @"$dir/header" -H 'Content-Type: application/json' \
+        --data-binary @"$dir/report.json" https://chimera-control.ralphandrer04.workers.dev/report
+  - path: /etc/systemd/system/chimera-report.service
+    content: |
+      [Unit]
+      Description=Tell the Worker what the computer and its containers are doing
+      Wants=network-online.target
+      After=network-online.target incus.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/chimera-agent
+      TimeoutStartSec=3min
+  - path: /etc/systemd/system/chimera-report.timer
+    content: |
+      [Timer]
+      OnBootSec=30s
+      OnUnitActiveSec=2min
+
+      [Install]
+      WantedBy=timers.target
+  - path: /etc/systemd/system/chimera-report-on-shutdown.service
+    content: |
+      [Unit]
+      Description=Tell the Worker what the computer is doing before shutting down
+      Wants=network-online.target
+      After=network-online.target systemd-networkd.service systemd-resolved.service incus.service incus-startup.service
+      RequiresMountsFor=/home
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/true
+      ExecStop=/usr/local/bin/chimera-agent
+      TimeoutStopSec=2min
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /usr/local/bin/chimera-idle-check
     permissions: "0755"
     content: |
@@ -556,5 +668,6 @@ runcmd:
     [ "$(incus network get incusbr0 dns.domain)" = ws ] || incus network set incusbr0 dns.domain=ws
     incus profile device get default awake source >/dev/null 2>&1 \
       || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
+  - systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service
   - tailscale set --advertise-routes=10.171.245.0/24
   - systemctl try-reload-or-restart ssh

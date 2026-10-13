@@ -1,3 +1,4 @@
+import { DurableObject } from "cloudflare:workers";
 import cloudInit from "../cloud-init.yaml";
 import imageInit from "../image.yaml";
 
@@ -18,6 +19,16 @@ const wakeByStatus = {
   starting: "waking",
   stopping: "busy",
   deleting: "busy",
+};
+
+const stateByStatus = {
+  none: "asleep",
+  initializing: "waking",
+  starting: "waking",
+  running: "awake",
+  stopping: "going-to-sleep",
+  off: "going-to-sleep",
+  deleting: "going-to-sleep",
 };
 
 const replies = {
@@ -160,6 +171,128 @@ async function deleteAndWait(env, id) {
   throw new Error(`deleting server ${id} didn't finish in 30 seconds`);
 }
 
+const text = (message, status) =>
+  new Response(message, { status, headers: { "Content-Type": "text/plain" } });
+
+const records = (env) => env.RECORDS.get(env.RECORDS.idFromName(name));
+
+const isText = (value) => typeof value === "string";
+const isTextOrNull = (value) => value === null || isText(value);
+const isLines = (value) => Array.isArray(value) && value.every(isText);
+const validWork = (work) =>
+  work === null || Boolean(work && isLines(work.unpushed) && isLines(work.uncommitted) && isTextOrNull(work.error));
+const validWorkspace = (w) =>
+  Boolean(w && isText(w.name) && w.name !== "" && isText(w.state)
+    && ["parent", "task", "repo", "branch"].every((key) => isTextOrNull(w[key])) && validWork(w.work));
+const validReport = (body) =>
+  Boolean(body && typeof body.busy === "boolean" && Array.isArray(body.workspaces) && body.workspaces.every(validWorkspace));
+
+function mergeWorkspaces(incoming, previous, now) {
+  const before = new Map(previous.map((w) => [w.name, w]));
+  return incoming.map((w) => {
+    if (w.work) return { ...w, work: { ...w.work, checkedAt: now } };
+    const kept = w.repo && before.get(w.name)?.work;
+    return kept ? { ...w, work: kept } : w;
+  });
+}
+
+function computerState(server, reportedAt) {
+  const state = stateByStatus[server ? server.status : "none"] ?? "unknown";
+  const reportedSinceBoot = reportedAt && Date.parse(reportedAt) > Date.parse(server?.created);
+  return state === "awake" && !reportedSinceBoot ? "waking" : state;
+}
+
+const ageSeconds = (time, now) => (time ? Math.floor((now - Date.parse(time)) / 1000) : null);
+
+function buildState(server, { computer, workspaces }, now) {
+  return {
+    state: computerState(server, computer.reportedAt),
+    server: server && {
+      status: server.status,
+      created: server.created,
+      firewalls: server.public_net?.firewalls?.length ?? 0,
+    },
+    want: computer.want,
+    wantAgeSeconds: ageSeconds(computer.wantAt, now),
+    busy: computer.busy,
+    reportAgeSeconds: ageSeconds(computer.reportedAt, now),
+    workspaces: workspaces.map((w) =>
+      w.work ? { ...w, work: { ...w.work, checkAgeSeconds: ageSeconds(w.work.checkedAt, now) } } : w),
+  };
+}
+
+export class Records extends DurableObject {
+  async computer() {
+    return (await this.ctx.storage.get("computer"))
+      ?? { want: null, wantAt: null, busy: null, reportedAt: null };
+  }
+
+  async report({ busy, workspaces }) {
+    const now = new Date().toISOString();
+    const previous = (await this.ctx.storage.get("workspaces")) ?? [];
+    await this.ctx.storage.put("workspaces", mergeWorkspaces(workspaces, previous, now));
+    await this.ctx.storage.put("computer", { ...(await this.computer()), busy, reportedAt: now });
+  }
+
+  async setWant(want) {
+    const computer = await this.computer();
+    if (computer.want === want) return;
+    await this.ctx.storage.put("computer", { ...computer, want, wantAt: new Date().toISOString() });
+  }
+
+  async read() {
+    return { computer: await this.computer(), workspaces: (await this.ctx.storage.get("workspaces")) ?? [] };
+  }
+}
+
+async function wake(request, env) {
+  const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
+  const server = servers[0];
+  const outcome = wakeByStatus[server ? server.status : "none"] ?? "busy";
+  if (outcome === "create") {
+    console.log("creating server");
+    await createServer(env);
+  } else if (outcome === "replace") {
+    console.log(`replacing ${server.name} (${server.id}), powered off`);
+    await deleteAndWait(env, server.id);
+    await createServer(env);
+  }
+  const [status, message] = replies[outcome];
+  if (status < 400) await records(env).setWant("awake");
+  return text(message, status);
+}
+
+async function report(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!validReport(body)) return text("Bad report.", 400);
+  await records(env).report(body);
+  return new Response(null, { status: 204 });
+}
+
+async function want(request, env) {
+  const requested = (await request.text()).trim();
+  if (requested !== "awake" && requested !== "asleep") return text("Say awake or asleep.", 400);
+  await records(env).setWant(requested);
+  return new Response(null, { status: 204 });
+}
+
+async function state(request, env) {
+  const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
+  const body = buildState(servers[0] ?? null, await records(env).read(), Date.now());
+  return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+}
+
+const routes = {
+  "POST /wake": ["WAKE_TOKEN", wake],
+  "POST /want": ["WAKE_TOKEN", want],
+  "GET /state": ["WAKE_TOKEN", state],
+  "POST /report": ["AGENT_TOKEN", report],
+};
+
+function authorized(request, secret) {
+  return typeof secret === "string" && secret !== "" && request.headers.get("Authorization") === `Bearer ${secret}`;
+}
+
 export default {
   async scheduled(event, env) {
     const maxAwake = Number(env.MAX_AWAKE_MINUTES);
@@ -172,32 +305,15 @@ export default {
       console.log(`${action} ${server.name} (${server.id}), ${server.status} for ${Math.floor(minutes)} min`);
       await hetzner(env, ...sweepRequests[action](server.id));
     }
+    if (!servers[0] || servers[0].status === "off") await records(env).setWant("asleep");
     await rebuildImage(env);
   },
 
   async fetch(request, env) {
-    const text = (message, status) =>
-      new Response(message, { status, headers: { "Content-Type": "text/plain" } });
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/wake") {
-      return text("Not found.", 404);
-    }
-    if (typeof env.WAKE_TOKEN !== "string" || env.WAKE_TOKEN === ""
-      || request.headers.get("Authorization") !== `Bearer ${env.WAKE_TOKEN}`) {
-      return text("Wrong password.", 401);
-    }
-
-    const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
-    const server = servers[0];
-    const outcome = wakeByStatus[server ? server.status : "none"] ?? "busy";
-    if (outcome === "create") {
-      console.log("creating server");
-      await createServer(env);
-    } else if (outcome === "replace") {
-      console.log(`replacing ${server.name} (${server.id}), powered off`);
-      await deleteAndWait(env, server.id);
-      await createServer(env);
-    }
-    const [status, message] = replies[outcome];
-    return text(message, status);
+    const route = routes[`${request.method} ${new URL(request.url).pathname}`];
+    if (!route) return text("Not found.", 404);
+    const [tokenName, handle] = route;
+    if (!authorized(request, env[tokenName])) return text("Wrong password.", 401);
+    return handle(request, env);
   },
 };

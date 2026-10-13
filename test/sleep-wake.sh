@@ -15,7 +15,7 @@ remote "sudo systemd-run --quiet systemd-inhibit --what=shutdown --mode=block --
 remote "systemd-inhibit --list --no-pager" | grep -q chimera-test || fail "couldn't hold a shutdown lock to test against"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep, even though the power button should beat a shutdown lock"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep, even though the power button should beat a shutdown lock"
 
 "$chimera" wake
 [ "$(host_key chimera)" = "$key_before" ] || fail "host key changed"

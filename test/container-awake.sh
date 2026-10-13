@@ -11,7 +11,7 @@ provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.na
 wake_with_short_timeout() {
   "$chimera" sleep
   "$chimera" wake
-  for _ in $(seq 60); do c ls >/dev/null 2>&1 && break; sleep 3; done
+  for _ in $(seq 60); do remote "incus list" >/dev/null 2>&1 && break; sleep 3; done
   remote "sudo sh -c 'echo 2 > /run/chimera-idle/minutes'"
 }
 
@@ -50,6 +50,6 @@ c rm c-awake --yes >/dev/null
 powers_off_within 40 "did not power off after the container's Claude was killed"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 
 echo "PASS: commands and Claude inside containers keep the computer awake, and it sleeps once they end or are killed"

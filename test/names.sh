@@ -14,8 +14,8 @@ resolves() {
 
 "$chimera" sleep
 "$chimera" wake
-for _ in $(seq 60); do c ls >/dev/null 2>&1 && break; sleep 3; done
-c ls >/dev/null || fail "chimera didn't answer within 3 minutes of waking"
+for _ in $(seq 60); do remote "incus list" >/dev/null 2>&1 && break; sleep 3; done
+remote "incus list" >/dev/null || fail "chimera didn't answer within 3 minutes of waking"
 
 c rm c-names --yes >/dev/null 2>&1 || true
 c new c-names >/dev/null
@@ -56,6 +56,6 @@ c shell c-names curl -fsS --max-time 5 -o /dev/null https://1.1.1.1/ || fail "c-
 
 c rm c-names --yes >/dev/null
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 
 echo "PASS: names resolve from the laptop, containers can't reach tailnet devices"

@@ -39,7 +39,7 @@ done
 remote "docker run --rm alpine nc -z -w 5 1.1.1.1 443" || fail "a Docker container on the host can't reach the internet"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 wake_until_incus
 
 for c in chimera-test chimera-test-fork; do

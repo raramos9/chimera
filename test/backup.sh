@@ -49,6 +49,6 @@ remote "echo $token > backup-test"
 remote "rm backup-test"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 
 echo "PASS: restored a deleted file, R2 refused to delete a backup, backed up before idle sleep and before chimera sleep"

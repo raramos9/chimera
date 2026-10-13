@@ -44,6 +44,6 @@ remote "pkill -KILL -x sleep"
 powers_off_within 40 "did not power off after the awake command was killed"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 
 echo "PASS: stayed awake while an awake command ran, slept after it finished or was killed"

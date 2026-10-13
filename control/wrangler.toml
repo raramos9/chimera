@@ -15,3 +15,11 @@ enabled = true
 type = "Text"
 globs = ["**/*.yaml"]
 fallthrough = false
+
+[[durable_objects.bindings]]
+name = "RECORDS"
+class_name = "Records"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Records"]

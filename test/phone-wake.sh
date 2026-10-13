@@ -43,6 +43,6 @@ wake "$token"
 [ "$status" = 200 ] && [ "$body" = "Already awake." ] || fail "second wake returned $status: $body"
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleeping"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleeping"
 
 echo "PASS: phone wake refused a wrong password, woke the computer behind the firewall, and left a running one alone"

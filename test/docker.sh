@@ -30,7 +30,7 @@ remote "docker run -d --name chimera-test --restart=always alpine sleep infinity
 image_before=$(remote "docker image inspect -f '{{.Id}}' alpine")
 
 "$chimera" sleep
-[ "$("$chimera" status)" = asleep ] || fail "computer is not asleep after sleep"
+[ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 wake_until_docker
 
 [ "$(remote "docker image inspect -f '{{.Id}}' alpine")" = "$image_before" ] || fail "alpine image didn't survive sleep"
