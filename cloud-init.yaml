@@ -113,31 +113,131 @@ write_files:
         die "$1 didn't get a network within 30 seconds"
       }
 
+      repo_dir() {
+        local repo
+        repo=$(incus config get "$1" user.chimera.repo)
+        if [ -n "$repo" ]; then echo "/home/andre/${repo#*/}"; else echo /home/andre; fi
+      }
+
+      git_in() {
+        local name=$1 dir
+        shift
+        dir=$(repo_dir "$name")
+        incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec git "$@"' bash "$dir" "$@"
+      }
+
+      lost_work() {
+        lost_dirty=$(git_in "$1" status --porcelain)
+        lost_unpushed=
+        git_in "$1" fetch --prune -q origin || return 2
+        lost_unpushed=$(git_in "$1" log --oneline --branches --not --remotes)
+        [ -z "$lost_dirty$lost_unpushed" ]
+      }
+
+      show_lost() {
+        [ -z "$lost_dirty" ] || printf 'Uncommitted files:\n%s\n' "$lost_dirty"
+        [ -z "$lost_unpushed" ] || printf 'Commits not on GitHub:\n%s\n' "$lost_unpushed"
+      }
+
       copy() {
-        local from=$1 name=$2 task=${3:-}
+        local from=$1 name=$2 task=${3:-} repo
         valid "$name"
         need "$from"
         exists "$name" && die "$name already exists"
+        repo=$(incus config get "$from" user.chimera.repo)
         incus copy "$from" "$name"
         incus config set "$name" user.chimera.parent="$from"
         if [ -n "$task" ]; then incus config set "$name" user.chimera.task="$task"; else incus config unset "$name" user.chimera.task 2>/dev/null || true; fi
+        if [ -z "$repo" ]; then
+          incus config unset "$name" user.chimera.repo 2>/dev/null || true
+          incus config unset "$name" user.chimera.branch 2>/dev/null || true
+        fi
         ready "$name"
-        echo "$name is ready. Apps it serves open at http://$name.ws:PORT"
       }
 
       cmd_new() {
-        [ $# -ge 1 ] || die "usage: chimera new NAME [TASK]"
+        [ $# -ge 1 ] || die "usage: chimera new NAME [TASK] [--repo OWNER/REPO]"
+        local name=$1 task= repo=
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --repo) [ $# -ge 2 ] || die "--repo needs OWNER/REPO"; repo=$2; shift 2 ;;
+            *) [ -z "$task" ] || die "usage: chimera new NAME [TASK] [--repo OWNER/REPO]"; task=$1; shift ;;
+          esac
+        done
+        [[ -z $repo || $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "'$repo' isn't a valid repo. Use OWNER/REPO."
         exists base || die "there's no base container yet. Build it with 'chimera base'."
-        copy base "$1" "${2:-}"
+        copy base "$name" "$task"
+        if [ -n "$repo" ]; then
+          if ! incus exec "$name" -- sudo -u andre -H bash -lc 'gh repo clone "$1" "$2" -- -q && git -C "$2" switch -q -c "$3"' bash "$repo" "/home/andre/${repo#*/}" "chimera/$name"; then
+            incus delete -f "$name"
+            die "couldn't clone $repo, so $name was deleted. Check the name and that your GitHub token can read it."
+          fi
+          incus config set "$name" user.chimera.repo="$repo"
+          incus config set "$name" user.chimera.branch="chimera/$name"
+          echo "$name is ready, on branch chimera/$name of $repo. Apps it serves open at http://$name.ws:PORT"
+        else
+          echo "$name is ready. Apps it serves open at http://$name.ws:PORT"
+        fi
       }
 
       cmd_fork() {
         [ $# -ge 2 ] || die "usage: chimera fork FROM NAME [TASK]"
         copy "$1" "$2" "${3:-}"
+        if [ -n "$(incus config get "$2" user.chimera.repo)" ]; then
+          if ! git_in "$2" switch -q -c "chimera/$2"; then
+            incus delete -f "$2"
+            die "couldn't make branch chimera/$2, so $2 was deleted"
+          fi
+          incus config set "$2" user.chimera.branch="chimera/$2"
+          echo "$2 is ready, on branch chimera/$2. Apps it serves open at http://$2.ws:PORT"
+        else
+          echo "$2 is ready. Apps it serves open at http://$2.ws:PORT"
+        fi
       }
 
       cmd_ls() {
-        incus list -c n,s,user.chimera.parent:FROM,user.chimera.task:TASK,c "$@"
+        incus list -c n,s,user.chimera.parent:FROM,user.chimera.task:TASK,user.chimera.repo:REPO,user.chimera.branch:BRANCH,c "$@"
+      }
+
+      cmd_results() {
+        [ $# -ge 1 ] || die "usage: chimera results NAME [--diff]"
+        local name=$1 repo task rc=0 count s
+        not_base "$name"
+        need "$name"
+        case "${2:-}" in ""|--diff) ;; *) die "usage: chimera results NAME [--diff]" ;; esac
+        repo=$(incus config get "$name" user.chimera.repo)
+        if [ -z "$repo" ]; then echo "$name has no repo."; return; fi
+        task=$(incus config get "$name" user.chimera.task)
+        ready "$name"
+        lost_work "$name" || rc=$?
+        echo "Repo: $repo"
+        echo "Branch: $(incus config get "$name" user.chimera.branch)"
+        [ -z "$task" ] || echo "Task: $task"
+        echo
+        echo "Commits on the branch:"
+        git_in "$name" log --oneline origin/HEAD..HEAD | sed 's/^/  /' | grep . || echo "  no commits yet"
+        echo
+        echo "Uncommitted files:"
+        git_in "$name" status --short | sed 's/^/  /' | grep . || echo "  nothing uncommitted"
+        echo
+        if [ "$rc" = 2 ]; then
+          echo "Couldn't check GitHub."
+        elif [ -n "$lost_unpushed" ]; then
+          count=$(printf '%s\n' "$lost_unpushed" | wc -l | tr -d ' ')
+          s=s; [ "$count" = 1 ] && s=
+          echo "$count commit$s not on GitHub:"
+          printf '%s\n' "$lost_unpushed" | sed 's/^/  /'
+        elif [ -n "$lost_dirty" ]; then
+          echo "Every commit is on GitHub, but the uncommitted files are not."
+        else
+          echo "Nothing to lose: everything is pushed."
+        fi
+        if [ "${2:-}" = --diff ]; then
+          echo
+          echo "Changes to tracked files compared with the default branch (untracked files are not included):"
+          git_in "$name" diff origin/HEAD
+        fi
       }
 
       cmd_run() {
@@ -150,7 +250,7 @@ write_files:
         need "$name"
         ready "$name"
         script=/tmp/chimera-run-$(date +%s%N).sh
-        printf '%q ' "$@" | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
+        { printf 'cd %q\n' "$(repo_dir "$name")"; printf '%q ' "$@"; } | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
         incus exec "$name" -- sudo -iu andre sh -c \
           "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'awake bash -l $script; exec bash -l'"
         echo "Started in $name. Watch it with 'chimera shell $name'."
@@ -158,23 +258,34 @@ write_files:
 
       cmd_shell() {
         [ $# -ge 1 ] || die "usage: chimera shell NAME [COMMAND]"
-        local name=$1
+        local name=$1 dir
         shift
         not_base "$name"
         need "$name"
         ready "$name"
+        dir=$(repo_dir "$name")
         if [ $# -eq 0 ]; then
-          exec incus exec "$name" -- sudo -iu andre tmux new-session -A -s main
+          exec incus exec "$name" -- sudo -iu andre tmux new-session -A -s main -c "$dir"
         fi
-        exec incus exec "$name" -- sudo -u andre -H bash -lc 'cd && exec "$@"' bash "$@"
+        exec incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec "$@"' bash "$dir" "$@"
       }
 
       cmd_rm() {
-        [ $# -ge 1 ] || die "usage: chimera rm NAME [--yes]"
-        local name=$1 answer
+        [ $# -ge 1 ] || die "usage: chimera rm NAME [--yes|--force]"
+        local name=$1 flag=${2:-} answer rc=0
         not_base "$name"
         need "$name"
-        if [ "${2:-}" != --yes ]; then
+        case "$flag" in ""|--yes|--force) ;; *) die "usage: chimera rm NAME [--yes|--force]" ;; esac
+        if [ -n "$(incus config get "$name" user.chimera.repo)" ] && [ "$flag" != --force ]; then
+          ready "$name"
+          lost_work "$name" || rc=$?
+          [ "$rc" != 2 ] || die "couldn't check GitHub, so $name was not deleted. Try again, or add --force to delete anyway."
+          if [ "$rc" = 1 ]; then
+            show_lost >&2
+            die "not deleted. Push it, or add --force to delete anyway."
+          fi
+        fi
+        if [ -z "$flag" ]; then
           [ -t 0 ] || die "add --yes to delete $name without a terminal"
           read -rp "$name isn't backed up. Type its name to delete it: " answer
           [ "$answer" = "$name" ] || die "not deleted"
@@ -221,8 +332,8 @@ write_files:
       cmd=${1:-}
       shift || true
       case "$cmd" in
-        new|fork|ls|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
-        *) die "usage: chimera new|fork|ls|run|shell|rm|secret|base" ;;
+        new|fork|ls|results|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
+        *) die "usage: chimera new|fork|ls|results|run|shell|rm|secret|base" ;;
       esac
   - path: /usr/local/share/chimera/base-setup.sh
     content: |

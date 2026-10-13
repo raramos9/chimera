@@ -195,6 +195,6 @@ case "${1:-}" in
   backup-keys) cmd_backup_keys ;;
   restore) cmd_restore ;;
   build-image) cmd_build_image ;;
-  new|fork|ls|run|shell|rm|secret|base) cmd_forward "$@" ;;
-  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|restore|build-image|new|fork|ls|run|shell|rm|secret|base" >&2; exit 2 ;;
+  new|fork|ls|results|run|shell|rm|secret|base) cmd_forward "$@" ;;
+  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|restore|build-image|new|fork|ls|results|run|shell|rm|secret|base" >&2; exit 2 ;;
 esac

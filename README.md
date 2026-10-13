@@ -45,9 +45,11 @@ Each agent or task can get its own small Linux computer, a container, inside the
 
 ```
 chimera new api-work "add rate limiting"     # a fresh container, with an optional note
+chimera new api-work --repo me/my-api         # the same, with that repo cloned on its own branch
 chimera run api-work -- claude -p "add rate limiting to the API"
 chimera fork api-work try-redis               # an instant copy to try another idea
-chimera ls                                    # what exists, what each came from, its note
+chimera ls                                    # what exists, what each came from, its note, repo and branch
+chimera results try-redis                     # what the container has done so far
 chimera shell try-redis                       # a terminal inside it, in tmux
 chimera shell try-redis git log               # or one command
 chimera rm try-redis                          # asks you to type the name first
@@ -56,6 +58,14 @@ chimera rm try-redis                          # asks you to type the name first
 Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use at most 1.5 GB of memory.
 
 `run` starts the command in a new tmux window inside the container and returns right away, so you can disconnect. `chimera shell NAME` attaches to that tmux. From inside the computer's own tmux, press Ctrl-b twice to reach the inner one. The computer stays on while a `run` command is going, even with nobody connected, and the usual 30-minute countdown starts when it ends. Inside a container, Claude and `awake` keep the computer on the same way they do outside one. The Worker still shuts everything down after 24 hours.
+
+### Repos and branches
+
+Add `--repo OWNER/REPO` to `chimera new` to give a container a real project. The container clones the repo into `~/REPO` and starts a new branch called `chimera/NAME`. `chimera shell` and `chimera run` start in that folder. A fork of a container with a repo gets its own branch, `chimera/NEW-NAME`, starting from wherever the original was. Uncommitted changes come along. If the clone fails, the container is deleted, so you can try again with the same name.
+
+`chimera results NAME` shows what a container has done: its repo and branch, the commits on the branch, the files not yet committed, and whether everything is on GitHub. Add `--diff` to see the changes themselves. The diff leaves out files Git doesn't track yet, but the list above it shows them.
+
+`chimera rm` checks the same things first. If the container has uncommitted files or commits that aren't on GitHub, it lists them and refuses to delete. If it can't reach GitHub to check, it refuses too. Push the work, or add `--force` to delete anyway. `--force` skips the check and the question. `--yes` skips only the question. Containers without a repo are deleted as before.
 
 ### Giving containers your Claude and GitHub logins
 
