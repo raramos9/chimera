@@ -42,7 +42,9 @@ ago() {
 }
 
 read_state() {
-  control GET /state 2>/dev/null || { echo "Couldn't reach the Worker." >&2; exit 1; }
+  local info
+  info=$(control GET /state 2>/dev/null) || { echo "Couldn't reach the Worker." >&2; exit 1; }
+  jq 'walk(if type == "string" then gsub("[[:cntrl:]]"; "?") else . end)' <<<"$info"
 }
 
 report_age() {
