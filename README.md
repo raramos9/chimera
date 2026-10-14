@@ -48,12 +48,28 @@ chimera new api-work "add rate limiting"     # a fresh container, with an option
 chimera new api-work --repo me/my-api         # the same, with that repo cloned on its own branch
 chimera run api-work -- claude -p "add rate limiting to the API"
 chimera fork api-work try-redis               # an instant copy to try another idea
-chimera ls                                    # what exists, what each came from, its note, repo and branch
+chimera ls                                    # what exists, what you want for each, what it came from, its note, repo and branch
 chimera results try-redis                     # what the container has done so far
 chimera shell try-redis                       # a terminal inside it, in tmux
 chimera shell try-redis git log               # or one command
+chimera stop try-redis                        # stop it without deleting it
+chimera start try-redis                       # and start it again
 chimera rm try-redis                          # asks you to type the name first
 ```
+
+### How new, fork, start, stop and rm work
+
+These five commands don't touch the containers directly. They tell the Worker what you want, and the computer makes it so. The Worker keeps the request even while the computer sleeps. `new`, `fork`, `start` and `rm` wake the computer if it's asleep. `stop` doesn't. It says the container will stop on the next wake and returns.
+
+Each command then waits and shows progress, usually a few seconds on an awake computer, or about a minute when it has to wake first. It ends with the result, or with the computer's reason for refusing, like work that isn't on GitHub. Ctrl-C stops the waiting, but the request stays and still happens. Asking twice is harmless. Stopping a stopped container changes nothing.
+
+An awake computer hears about a new request right away over a connection it keeps open to the Worker. It also checks every 2 minutes in case that connection dropped.
+
+A request that fails, like a `new` whose repo can't be cloned, stays in place with its error, and `chimera ls` lists the error under the table. The computer doesn't retry it on its own. Run the command again, or remove the request with `chimera rm NAME`, which also frees the name for a new `chimera new`.
+
+`chimera ls` has a WANT column with what you asked for: `running`, `stopped` or `gone`. A container made some other way, like by hand with `incus`, shows `not managed`. Nothing ever deletes or changes a container just because nobody asked for it. `chimera stop`, `start` and `rm` work on it too, and from then on it's managed.
+
+On the computer itself, the same five commands go through the Worker the same way, using the computer's own password.
 
 Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use at most 1.5 GB of memory.
 
@@ -61,11 +77,11 @@ Every container starts as a copy of one called `base`, which already has Claude 
 
 ### Repos and branches
 
-Add `--repo OWNER/REPO` to `chimera new` to give a container a real project. The container clones the repo into `~/REPO` and starts a new branch called `chimera/NAME`. `chimera shell` and `chimera run` start in that folder. A fork of a container with a repo gets its own branch, `chimera/NEW-NAME`, starting from wherever the original was. Uncommitted changes come along. If the clone fails, the container is deleted, so you can try again with the same name.
+Add `--repo OWNER/REPO` to `chimera new` to give a container a real project. The container clones the repo into `~/REPO` and starts a new branch called `chimera/NAME`. `chimera shell` and `chimera run` start in that folder. A fork of a container with a repo gets its own branch, `chimera/NEW-NAME`, starting from wherever the original was. Uncommitted changes come along. If the clone fails, the container is deleted and `chimera ls` shows why. Remove the request with `chimera rm NAME` to try again with the same name.
 
 `chimera results NAME` shows what a container has done: its repo and branch, the commits on the branch, the files not yet committed, and whether everything is on GitHub. Add `--diff` to see the changes themselves. The diff leaves out files Git doesn't track yet, but the list above it shows them.
 
-`chimera rm` checks the same things first. If the container has uncommitted files or commits that aren't on GitHub, it lists them and refuses to delete. If it can't reach GitHub to check, it refuses too. Push the work, or add `--force` to delete anyway. `--force` skips the check and the question. `--yes` skips only the question. Containers without a repo are deleted as before.
+`chimera rm` checks the same things first, on the computer. If the container has uncommitted files or commits that aren't on GitHub, it lists them and refuses to delete. If it can't reach GitHub to check, it refuses too. Push the work, or add `--force` to delete anyway. `--force` skips the check and the question. `--yes` skips only the question. Containers without a repo are deleted as before.
 
 ### Giving containers your Claude and GitHub logins
 
@@ -102,7 +118,7 @@ Good to know:
 
 ## Checking on things while it sleeps
 
-`chimera status` and `chimera ls` on the laptop don't wake the computer. They ask the Worker, which remembers the last report the computer sent. The computer sends one every 2 minutes, when it boots, and just before it shuts down. Both commands say how old the information is, for example `Computer asleep. Last report 40 min ago.` `ls` also lists commits that aren't on GitHub and uncommitted files, with how long ago they were checked. A container that is stopped keeps its last check.
+`chimera status` and `chimera ls` on the laptop don't wake the computer. They ask the Worker, which remembers the last report the computer sent. The computer sends one every 2 minutes, when it boots, after it acts on a request, and just before it shuts down. Both commands say how old the information is, for example `Computer asleep. Last report 40 min ago.` `ls` also lists commits that aren't on GitHub and uncommitted files, with how long ago they were checked. A container that is stopped keeps its last check.
 
 Line 1 of `chimera status` is `asleep`, `waking`, `awake` or `going-to-sleep`. Line 2 is the report age, and says so if an agent was working at the time.
 

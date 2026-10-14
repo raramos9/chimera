@@ -582,7 +582,7 @@ console.log("PASS: new stores an order from base, wakes a sleeping computer and 
 
 placed = await placeOrder(runningServer, { action: "new", name: "a" });
 assert.equal(placed.status, 409);
-assert.equal(placed.body, "a already exists.");
+assert.equal(placed.body, "There's already a container or an order called a.");
 resetRecords([workspace("hand")]);
 placed = await placeOrder(runningServer, { action: "new", name: "hand" });
 assert.equal(placed.status, 409);

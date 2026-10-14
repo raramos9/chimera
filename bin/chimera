@@ -23,13 +23,15 @@ ssh_answers() {
   ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none "$user@$name" true 2>/dev/null
 }
 
-control() {
+request() {
   local method=$1 path=$2 url
   shift 2
   url=$(cat "$config/wake-url")
   printf 'Authorization: Bearer %s\n' "$(tr -d '\n' < "$config/wake-token")" \
-    | curl -fsS --max-time 10 -X "$method" -H @- "$@" "${url%/wake}$path"
+    | curl -sS --max-time 10 -X "$method" -H @- "$@" "${url%/wake}$path"
 }
+
+control() { request "$@" -f; }
 
 want() { control POST /want --max-time 5 -d "$1" >/dev/null 2>&1 || true; }
 
@@ -44,7 +46,8 @@ ago() {
 read_state() {
   local info
   info=$(control GET /state 2>/dev/null) || { echo "Couldn't reach the Worker." >&2; exit 1; }
-  jq 'walk(if type == "string" then gsub("[[:cntrl:]]"; "?") else . end)' <<<"$info"
+  jq '.workspaces[].error |= (if . then split("\n") else . end)
+    | walk(if type == "string" then gsub("[[:cntrl:]]"; "?") else . end)' <<<"$info"
 }
 
 report_age() {
@@ -85,9 +88,13 @@ cmd_ls() {
   info=$(read_state)
   echo "Computer $(jq -r .state <<<"$info"). $(report_age "$info")"
   if jq -e '.workspaces | length == 0' <<<"$info" >/dev/null; then echo "No containers."; return; fi
-  jq -r '(["NAME", "STATE", "FROM", "TASK", "REPO", "BRANCH"] | @tsv),
-    (.workspaces[] | [.name, .state, .parent // "-", .task // "-", .repo // "-", .branch // "-"] | @tsv)' <<<"$info" \
+  jq -r '(["NAME", "STATE", "WANT", "FROM", "TASK", "REPO", "BRANCH"] | @tsv),
+    (.workspaces[] | [.name, .state // "-", .want // "not managed", .parent // "-", .task // "-", .repo // "-", .branch // "-"] | @tsv)' <<<"$info" \
     | column -t -s $'\t'
+  if jq -e 'any(.workspaces[]; .error != null)' <<<"$info" >/dev/null; then
+    echo
+    jq -r '.workspaces[] | select(.error != null) | "\(.name): \(.error | join("\n  "))"' <<<"$info"
+  fi
   seconds=$(jq -r '.reportAgeSeconds // empty' <<<"$info")
   while IFS= read -r w; do
     notes=$(work_notes "$w")
@@ -97,6 +104,93 @@ cmd_ls() {
     checked=$(jq -r '.work.checkAgeSeconds // empty' <<<"$w")
     if [ -n "$checked" ] && [ -n "$seconds" ] && [ "$checked" -gt "$seconds" ]; then echo "(checked $(ago "$checked"))"; fi
   done < <(jq -c '.workspaces[] | select(.work != null)' <<<"$info")
+}
+
+valid_name() {
+  [[ $1 =~ ^[a-z][a-z0-9-]{0,62}$ && $1 != base ]] || { echo "'$1' isn't a valid name. Use lowercase letters, digits and dashes." >&2; exit 2; }
+}
+
+finished() {
+  case "$1" in
+    new|fork) jq -r '"\(.name) is ready" + (if .repo then ", on branch \(.branch) of \(.repo)" else "" end)
+      + ". Apps it serves open at http://\(.name).ws:PORT"' <<<"$2" ;;
+    start) echo "$(jq -r .name <<<"$2") is running." ;;
+    stop) echo "$(jq -r .name <<<"$2") is stopped." ;;
+  esac
+}
+
+order() {
+  local action=$1 name=$2 body reply code rev info computer seen= row deadline=$((SECONDS + 900))
+  body=$(jq -n --arg action "$action" --arg name "$name" --arg from "$3" --arg task "$4" --arg repo "$5" --arg force "$6" \
+    '{action: $action, name: $name, from: $from, task: $task, repo: $repo} | with_entries(select(.value != ""))
+      + (if $force == "" then {} else {force: true} end)')
+  reply=$(request POST /orders -H 'Content-Type: application/json' --data-binary "$body" -w '\n%{http_code}') \
+    || { echo "Couldn't reach the Worker." >&2; exit 1; }
+  code=${reply##*$'\n'}
+  reply=${reply%$'\n'*}
+  [ "$code" = 200 ] || { echo "$reply" >&2; exit 1; }
+  rev=$(jq .rev <<<"$reply")
+  [ "$(jq -r .woke <<<"$reply")" = null ] || echo "Waking the computer..."
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if info=$(read_state 2>/dev/null); then
+      computer=$(jq -r .state <<<"$info")
+      if [ "$computer" = asleep ] || [ "$computer" = going-to-sleep ]; then
+        if [ "$action" = stop ]; then echo "Computer $computer. $name will stop when it next wakes."; return; fi
+        if [ -z "$seen" ]; then echo "Computer $computer. The order waits and runs when it next wakes."; return; fi
+      fi
+      [ -z "$seen" ] || [ "$computer" = "$seen" ] || echo "Computer $computer. Still waiting..."
+      seen=$computer
+      row=$(jq -c --arg name "$name" '.workspaces[] | select(.name == $name)' <<<"$info")
+      if [ -z "$row" ] && [ "$action" = rm ]; then echo "deleted $name"; return; fi
+      if [ -n "$row" ] && jq -e --argjson rev "$rev" '.doneRev != null and .doneRev >= $rev' <<<"$row" >/dev/null; then
+        if jq -e '.error != null' <<<"$row" >/dev/null; then jq -r '.error[]' <<<"$row" >&2; exit 1; fi
+        finished "$action" "$row"
+        return
+      fi
+    fi
+    sleep 3
+  done
+  echo "$name still isn't done after 15 minutes. The order stays in place. 'chimera ls' shows how it's going." >&2
+  exit 1
+}
+
+cmd_new() {
+  local usage="usage: chimera new NAME [TASK] [--repo OWNER/REPO]" name task= repo=
+  [ $# -ge 1 ] || { echo "$usage" >&2; exit 2; }
+  name=$1
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || { echo "--repo needs OWNER/REPO" >&2; exit 2; }; repo=$2; shift 2 ;;
+      *) [ -z "$task" ] || { echo "$usage" >&2; exit 2; }; task=$1; shift ;;
+    esac
+  done
+  valid_name "$name"
+  [[ -z $repo || $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "'$repo' isn't a valid repo. Use OWNER/REPO." >&2; exit 2; }
+  order new "$name" "" "$task" "$repo" ""
+}
+
+cmd_fork() {
+  [ $# -ge 2 ] && [ $# -le 3 ] || { echo "usage: chimera fork FROM NAME [TASK]" >&2; exit 2; }
+  valid_name "$2"
+  order fork "$2" "$1" "${3:-}" "" ""
+}
+
+cmd_start_stop() {
+  [ $# -eq 2 ] || { echo "usage: chimera $1 NAME" >&2; exit 2; }
+  order "$1" "$2" "" "" "" ""
+}
+
+cmd_rm() {
+  [ $# -ge 1 ] && [ $# -le 2 ] || { echo "usage: chimera rm NAME [--yes|--force]" >&2; exit 2; }
+  local name=$1 flag=${2:-} answer
+  case "$flag" in ""|--yes|--force) ;; *) echo "usage: chimera rm NAME [--yes|--force]" >&2; exit 2 ;; esac
+  if [ -z "$flag" ]; then
+    [ -t 0 ] || { echo "add --yes to delete $name without a terminal" >&2; exit 1; }
+    read -rp "$name isn't backed up. Type its name to delete it: " answer
+    [ "$answer" = "$name" ] || { echo "not deleted" >&2; exit 1; }
+  fi
+  order rm "$name" "" "" "" "${flag/--yes/}"
 }
 
 cmd_sleep() {
@@ -270,6 +364,10 @@ case "${1:-}" in
   restore) cmd_restore ;;
   build-image) cmd_build_image ;;
   ls) shift; cmd_ls "$@" ;;
-  new|fork|results|run|shell|rm|secret|base) cmd_forward "$@" ;;
-  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|agent-key|restore|build-image|new|fork|ls|results|run|shell|rm|secret|base" >&2; exit 2 ;;
+  new) shift; cmd_new "$@" ;;
+  fork) shift; cmd_fork "$@" ;;
+  start|stop) cmd_start_stop "$@" ;;
+  rm) shift; cmd_rm "$@" ;;
+  results|run|shell|secret|base) cmd_forward "$@" ;;
+  *) echo "usage: chimera sleep|wake|connect|status|backup-keys|agent-key|restore|build-image|new|fork|start|stop|ls|results|run|shell|rm|secret|base" >&2; exit 2 ;;
 esac

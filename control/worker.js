@@ -199,7 +199,7 @@ const isTask = (value) => isText(value) && value.length <= maxTaskLength;
 
 const adopted = (name) => ({ name, want: null, force: false, from: null, task: null, repo: null });
 const missing = (name) => [404, `There's no container called ${name}.`];
-const taken = (name) => [409, `${name} already exists.`];
+const taken = (name) => [409, `There's already a container or an order called ${name}.`];
 
 function setWant(want) {
   return ({ name, force }, { orders, known }) => {
