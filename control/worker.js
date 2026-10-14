@@ -91,6 +91,17 @@ async function hetzner(env, method, path, body) {
   return res.json();
 }
 
+// Hetzner caps user data at 32 KiB and passes it on untouched. cloud-init unzips a MIME part marked application/gzip.
+async function packUserData(text) {
+  const gzipped = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(gzipped)));
+  return [
+    'Content-Type: multipart/mixed; boundary="chimera"', "MIME-Version: 1.0", "",
+    "--chimera", "Content-Type: application/gzip", "Content-Transfer-Encoding: base64", "",
+    base64, "--chimera--", "",
+  ].join("\n");
+}
+
 async function createServer(env) {
   const volumeIds = [];
   for (const volumeName of volumeNames) {
@@ -111,7 +122,7 @@ async function createServer(env) {
     automount: false,
     public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: primaryIpId },
     firewalls: [{ firewall: firewallId }],
-    user_data: cloudInit,
+    user_data: await packUserData(cloudInit),
   });
 }
 

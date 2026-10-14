@@ -218,13 +218,22 @@ newest_image() {
     | jq -r '[(. // [])[] | select(.status == "available")][0].id // empty'
 }
 
+# Hetzner caps user data at 32 KiB and passes it on untouched. cloud-init unzips a MIME part marked application/gzip.
+pack_user_data() {
+  printf 'Content-Type: multipart/mixed; boundary="chimera"\nMIME-Version: 1.0\n\n--chimera\n'
+  printf 'Content-Type: application/gzip\nContent-Transfer-Encoding: base64\n\n'
+  gzip -9 -n -c "$1" | base64 | tr -d '\n'
+  printf '\n%s\n' --chimera--
+}
+
 create_server() {
-  local image
+  local image user_data=$1
+  shift
   image=$(newest_image)
   [ -n "$image" ] || { echo "There's no chimera image yet. Build one with 'chimera build-image'." >&2; exit 1; }
   hcloud server create --name "$name" --type "$server_type" --image "$image" \
     --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
-    "${volumes[@]/#/--volume=}" --user-data-from-file "$@"
+    "${volumes[@]/#/--volume=}" --user-data-from-file <(pack_user_data "$user_data") "$@"
 }
 
 cmd_wake() {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { register } from "node:module";
+import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const hook = `
@@ -70,9 +71,10 @@ const RECORDS = { idFromName: (id) => id, get: () => records };
 const testEnv = (extra = {}) =>
   ({ HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440", WAKE_TOKEN: "pw", AGENT_TOKEN: "agent", RECORDS, ...extra });
 
-const cloudInitBytes = fs.statSync(fileURLToPath(new URL("../cloud-init.yaml", import.meta.url))).size;
-assert.ok(cloudInitBytes <= 32 * 1024, `cloud-init.yaml is ${cloudInitBytes} bytes, over Hetzner's 32 KiB user data limit`);
-console.log("PASS: cloud-init.yaml fits in Hetzner's user data limit");
+const unpackUserData = (packed) => {
+  const [, base64] = packed.match(/^Content-Transfer-Encoding: base64\n\n(\S+)\n--chimera--\n$/m);
+  return gunzipSync(Buffer.from(base64, "base64")).toString("utf8");
+};
 
 async function run(label, servers, check) {
   calls.length = 0;
@@ -198,7 +200,8 @@ await runWake("asleep computer is created", [], () => wake("pw"), async (res) =>
   assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/images?type=snapshot&status=available&label_selector=chimera%3Dbase&sort=created:desc"));
   assert.equal(posts()[0].url, "https://api.hetzner.cloud/v1/servers");
   assert.equal(posts()[0].headers["Content-Type"], "application/json");
-  assert.deepEqual(JSON.parse(posts()[0].body), {
+  const body = JSON.parse(posts()[0].body);
+  assert.deepEqual(body, {
     name: "chimera",
     server_type: "cpx11",
     image: 555,
@@ -208,8 +211,10 @@ await runWake("asleep computer is created", [], () => wake("pw"), async (res) =>
     automount: false,
     public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: 154132581 },
     firewalls: [{ firewall: 11770509 }],
-    user_data: fs.readFileSync(fileURLToPath(new URL("../cloud-init.yaml", import.meta.url)), "utf8"),
+    user_data: body.user_data,
   });
+  assert.ok(body.user_data.length <= 32 * 1024, `user data is ${body.user_data.length} bytes, over Hetzner's 32 KiB limit`);
+  assert.equal(unpackUserData(body.user_data), fs.readFileSync(fileURLToPath(new URL("../cloud-init.yaml", import.meta.url)), "utf8"));
 });
 
 await runWake("running computer is left alone", [{ id: 42, name: "chimera", status: "running" }], () => wake("pw"), async (res) => {
