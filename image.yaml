@@ -2,7 +2,7 @@
 
 package_update: true
 package_upgrade: true
-packages: [restic]
+packages: [restic, python3-websockets]
 
 runcmd:
   - curl -fsSL https://tailscale.com/install.sh | sh
@@ -24,7 +24,7 @@ runcmd:
   - |
     systemd-run --unit chimera-seal sh -c '
       cloud-init status --wait >/dev/null \
-        && command -v restic && command -v tailscale && command -v docker && command -v incus \
+        && command -v restic && python3 -c "import websockets" && command -v tailscale && command -v docker && command -v incus \
         && systemctl stop tailscaled docker docker.socket containerd \
         && systemctl disable --now incus-startup.service incus.service incus.socket incus-user.service incus-user.socket \
         && rm -rf /var/lib/tailscale/* /var/lib/docker/* /var/lib/containerd/* /var/lib/incus/* /etc/ssh/ssh_host_* \

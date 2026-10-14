@@ -624,6 +624,46 @@ write_files:
 
     [Install]
     WantedBy=multi-user.target
+- path: /usr/local/bin/chimera-listen
+  permissions: "0755"
+  content: |
+    #!/usr/bin/python3
+    import asyncio, subprocess, websockets
+
+    def start_round():
+        subprocess.run(["systemctl", "start", "--no-block", "chimera-report.service"])
+
+    async def listen():
+        with open("/home/.chimera/agent-token") as f:
+            headers = {"Authorization": "Bearer " + f.read().strip()}
+        url = "wss://chimera-control.ralphandrer04.workers.dev/agent"
+        async with websockets.connect(url, extra_headers=headers, ping_interval=None) as ws:
+            start_round()
+            while True:
+                try:
+                    message = await asyncio.wait_for(ws.recv(), 30)
+                except asyncio.TimeoutError:
+                    await ws.send("ping")
+                    message = await asyncio.wait_for(ws.recv(), 20)
+                if message == "orders":
+                    start_round()
+
+    asyncio.run(listen())
+- path: /etc/systemd/system/chimera-listen.service
+  content: |
+    [Unit]
+    Description=Run a round as soon as the Worker says orders changed
+    Wants=network-online.target
+    After=network-online.target
+    ConditionPathExists=/home/.chimera/agent-token
+
+    [Service]
+    ExecStart=/usr/local/bin/chimera-listen
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
 - path: /usr/local/bin/chimera-idle-check
   permissions: "0755"
   content: |
@@ -818,6 +858,6 @@ runcmd:
   [ "$(incus network get incusbr0 dns.domain)" = ws ] || incus network set incusbr0 dns.domain=ws
   incus profile device get default awake source >/dev/null 2>&1 \
     || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
-- systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service
+- systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service chimera-listen.service
 - tailscale set --advertise-routes=10.171.245.0/24
 - systemctl try-reload-or-restart ssh
