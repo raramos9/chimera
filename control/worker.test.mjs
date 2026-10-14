@@ -55,8 +55,15 @@ globalThis.fetch = async (url, init) => {
 const { default: worker, Records } = await import("./worker.js");
 
 const storage = new Map();
+const sockets = [];
+let autoResponse = null;
 const records = new Records(
-  { storage: { get: async (key) => storage.get(key), put: async (key, value) => void storage.set(key, structuredClone(value)) } },
+  {
+    storage: { get: async (key) => storage.get(key), put: async (key, value) => void storage.set(key, structuredClone(value)) },
+    getWebSockets: () => sockets,
+    acceptWebSocket: (socket) => sockets.push(socket),
+    setWebSocketAutoResponse: (pair) => { autoResponse = pair; },
+  },
   {},
 );
 const RECORDS = { idFromName: (id) => id, get: () => records };
@@ -352,21 +359,28 @@ const sendReport = (workspaces, busy = false) =>
 const secondsAgo = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
 const nearNow = (time) => Math.abs(Date.parse(time) - Date.now()) < 5000;
 
-for (const [method, path, tokenVar, good] of [
-  ["POST", "/wake", "WAKE_TOKEN", "pw"],
-  ["POST", "/want", "WAKE_TOKEN", "pw"],
-  ["GET", "/state", "WAKE_TOKEN", "pw"],
-  ["POST", "/report", "AGENT_TOKEN", "agent"],
+const tokenValues = { WAKE_TOKEN: "pw", AGENT_TOKEN: "agent" };
+for (const [method, path, tokenVars] of [
+  ["POST", "/wake", ["WAKE_TOKEN"]],
+  ["POST", "/want", ["WAKE_TOKEN"]],
+  ["GET", "/state", ["WAKE_TOKEN", "AGENT_TOKEN"]],
+  ["POST", "/orders", ["WAKE_TOKEN", "AGENT_TOKEN"]],
+  ["GET", "/orders", ["AGENT_TOKEN"]],
+  ["POST", "/report", ["AGENT_TOKEN"]],
+  ["GET", "/agent", ["AGENT_TOKEN"]],
 ]) {
   storage.clear();
   calls.length = 0;
   const body = method === "POST" ? "awake" : undefined;
+  const otherTokens = Object.keys(tokenValues).filter((t) => !tokenVars.includes(t)).map((t) => [`the ${t}`, { token: tokenValues[t] }]);
+  const unset = Object.fromEntries(tokenVars.map((t) => [t, undefined]));
+  const empty = Object.fromEntries(tokenVars.map((t) => [t, ""]));
   for (const [what, options] of [
     ["wrong token", { token: "nope" }],
     ["missing token", { token: null }],
-    ["the other route's token", { token: good === "pw" ? "agent" : "pw" }],
-    [`unset ${tokenVar}`, { token: "undefined", env: { [tokenVar]: undefined } }],
-    [`empty ${tokenVar}`, { token: "", env: { [tokenVar]: "" } }],
+    ...otherTokens,
+    ["unset tokens", { token: "undefined", env: unset }],
+    ["empty tokens", { token: "", env: empty }],
   ]) {
     const res = await call(method, path, { body, ...options });
     assert.equal(res.status, 401, `${method} ${path} with ${what}`);
@@ -508,3 +522,260 @@ storage.clear();
 await run("the cron records asleep when nothing was asked yet", [], () => assert.equal(storage.get("computer").want, "asleep"));
 storage.set("computer", { ...storage.get("computer"), wantAt: old });
 await run("the cron doesn't rewrite a want that is already asleep", [], () => assert.equal(storage.get("computer").wantAt, old));
+
+const order = (body, token = "pw") => call("POST", "/orders", { token, body: JSON.stringify(body) });
+const runningServer = [{ id: 42, name: "chimera", status: "running", created: secondsAgo(600) }];
+const serverPosts = () => posts().filter((c) => new URL(c.url).pathname === "/v1/servers");
+const placeOrder = async (servers, body, token) => {
+  calls.length = 0;
+  list = () => new Response(JSON.stringify({ servers }));
+  const r = await order(body, token);
+  return { status: r.status, body: r.status === 200 ? await r.json() : await r.text() };
+};
+const resetRecords = (workspaces = []) => {
+  storage.clear();
+  sockets.length = 0;
+  if (workspaces.length) storage.set("workspaces", workspaces);
+};
+const nudges = () => sockets.flatMap((s) => s.sent);
+const fakeSocket = () => ({ sent: [], send(message) { this.sent.push(message); } });
+
+resetRecords();
+for (const bad of [
+  "not json",
+  "null",
+  {},
+  { action: "make", name: "a" },
+  { action: "new" },
+  { action: "new", name: "Bad" },
+  { action: "new", name: "base" },
+  { action: "new", name: "-a" },
+  { action: "new", name: "a".repeat(64) },
+  { action: "new", name: "a", repo: "no-slash" },
+  { action: "new", name: "a", repo: "a/b/c" },
+  { action: "new", name: "a", task: 5 },
+  { action: "new", name: "a", task: "x".repeat(2001) },
+  { action: "rm", name: "a", force: "yes" },
+  { action: "fork", name: "a" },
+  { action: "fork", name: "a", from: "Bad" },
+]) {
+  const r = await call("POST", "/orders", { body: typeof bad === "string" ? bad : JSON.stringify(bad) });
+  assert.equal(r.status, 400, JSON.stringify(bad));
+  assert.equal(await r.text(), "Bad order.");
+}
+assert.equal(storage.size, 0);
+console.log("PASS: a malformed order is refused and stores nothing");
+
+resetRecords();
+sockets.push(fakeSocket());
+let placed = await placeOrder([], { action: "new", name: "a", task: "do it", repo: "o/r" });
+assert.deepEqual(placed.body, { rev: 1, woke: "create" });
+assert.equal(serverPosts().length, 1);
+let storedOrder = storage.get("orders").a;
+assert.deepEqual({ ...storedOrder, orderedAt: undefined },
+  { name: "a", want: "running", force: false, from: "base", task: "do it", repo: "o/r", rev: 1, orderedAt: undefined });
+assert.ok(nearNow(storedOrder.orderedAt));
+assert.equal(storage.get("rev"), 1);
+assert.equal(storage.get("computer").want, "awake");
+assert.deepEqual(nudges(), ["orders"]);
+console.log("PASS: new stores an order from base, wakes a sleeping computer and nudges the computer");
+
+placed = await placeOrder(runningServer, { action: "new", name: "a" });
+assert.equal(placed.status, 409);
+assert.equal(placed.body, "a already exists.");
+resetRecords([workspace("hand")]);
+placed = await placeOrder(runningServer, { action: "new", name: "hand" });
+assert.equal(placed.status, 409);
+assert.equal(storage.get("orders"), undefined);
+console.log("PASS: new refuses a name that has an order or a reported container");
+
+resetRecords([workspace("seen")]);
+placed = await placeOrder(runningServer, { action: "new", name: "b" }, "agent");
+assert.deepEqual(placed.body, { rev: 1, woke: null });
+assert.equal(serverPosts().length, 0);
+assert.equal(storage.get("orders").b.repo, null);
+console.log("PASS: the computer's token can order too, and an awake computer is not woken again");
+
+for (const [label, from, expected] of [
+  ["from base", "base", 200],
+  ["from a reported container", "seen", 200],
+  ["from an ordered container", "b", 200],
+  ["from nothing", "ghost", 404],
+]) {
+  const before = storage.get("rev");
+  placed = await placeOrder(runningServer, { action: "fork", name: `f-${from}`, from, task: "try", repo: "o/ignored" });
+  assert.equal(placed.status, expected, label);
+  if (expected === 200) {
+    assert.deepEqual({ ...storage.get("orders")[`f-${from}`], orderedAt: undefined },
+      { name: `f-${from}`, want: "running", force: false, from, task: "try", repo: null, rev: before + 1, orderedAt: undefined });
+  } else {
+    assert.equal(placed.body, "There's no container called ghost.");
+    assert.equal(storage.get("rev"), before);
+  }
+}
+placed = await placeOrder(runningServer, { action: "fork", name: "seen", from: "base" });
+assert.equal(placed.status, 409);
+console.log("PASS: fork needs a parent that exists and a free name, and inherits the repo on the computer");
+
+resetRecords([workspace("seen")]);
+storage.set("orders", { going: { name: "going", want: "gone", force: false, from: "base", task: null, repo: null, rev: 3 } });
+storage.set("rev", 3);
+assert.equal((await placeOrder(runningServer, { action: "fork", name: "x", from: "going" })).status, 404);
+storage.set("workspaces", [workspace("seen"), workspace("going")]);
+assert.equal((await placeOrder(runningServer, { action: "fork", name: "x", from: "going" })).status, 200);
+console.log("PASS: fork refuses a parent that is being deleted unless the computer still reports it");
+
+for (const action of ["start", "stop"]) {
+  placed = await placeOrder(runningServer, { action, name: "going" });
+  assert.equal(placed.status, 409);
+  assert.equal(placed.body, "going is being deleted.");
+  placed = await placeOrder(runningServer, { action, name: "ghost" });
+  assert.equal(placed.status, 404);
+}
+console.log("PASS: start and stop refuse an unknown name and one being deleted");
+
+resetRecords([workspace("hand")]);
+sockets.push(fakeSocket());
+placed = await placeOrder([], { action: "stop", name: "hand" });
+assert.deepEqual(placed.body, { rev: 1, woke: null });
+assert.equal(calls.length, 0);
+assert.deepEqual({ ...storage.get("orders").hand, orderedAt: undefined },
+  { name: "hand", want: "stopped", force: false, from: null, task: null, repo: null, rev: 1, orderedAt: undefined });
+placed = await placeOrder([], { action: "stop", name: "hand" });
+assert.deepEqual(placed.body, { rev: 2, woke: null });
+assert.deepEqual(nudges(), ["orders", "orders"]);
+console.log("PASS: stop adopts a reported container without waking the computer, and stopping twice is just a new order");
+
+placed = await placeOrder([], { action: "start", name: "hand" });
+assert.deepEqual(placed.body, { rev: 3, woke: "create" });
+assert.equal(storage.get("orders").hand.want, "running");
+assert.equal(storage.get("orders").hand.from, null);
+console.log("PASS: start sets want running and wakes a sleeping computer");
+
+placed = await placeOrder(runningServer, { action: "rm", name: "hand" });
+assert.equal(storage.get("orders").hand.want, "gone");
+assert.equal(storage.get("orders").hand.force, false);
+placed = await placeOrder(runningServer, { action: "rm", name: "hand", force: true });
+assert.deepEqual(placed.body, { rev: 5, woke: null });
+assert.equal(storage.get("orders").hand.force, true);
+assert.equal((await placeOrder(runningServer, { action: "rm", name: "ghost" })).status, 404);
+console.log("PASS: rm sets want gone with force, and asking again is a new order");
+
+resetRecords();
+storage.set("orders", { a: { name: "a", want: "stopped", force: false, from: "base", task: null, repo: null, rev: 1 } });
+storage.set("rev", 1);
+placed = await placeOrder([{ id: 42, name: "chimera", status: "stopping" }], { action: "start", name: "a" });
+assert.deepEqual(placed.body, { rev: 2, woke: null });
+assert.equal(serverPosts().length, 0);
+assert.deepEqual([storage.get("orders").a.want, storage.get("orders").a.rev], ["running", 2]);
+console.log("PASS: an order made while the computer is going to sleep is kept and waits");
+
+const orderRow = (name, want, rev, extra = {}) => ({ name, want, force: false, from: "base", task: null, repo: null, rev, orderedAt: old, ...extra });
+const sendOutcomes = (outcomes, seenRev, workspaces = []) =>
+  call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, workspaces, outcomes, seenRev }) });
+
+resetRecords();
+sockets.push(fakeSocket());
+storage.set("orders", {
+  made: orderRow("made", "running", 4),
+  failed: orderRow("failed", "running", 5),
+  gone: orderRow("gone", "gone", 6),
+  refused: orderRow("refused", "gone", 7),
+  stale: orderRow("stale", "gone", 9),
+});
+storage.set("results", { gone: { rev: 2, error: "old", at: old } });
+storage.set("rev", 9);
+res = await sendOutcomes([
+  { name: "made", rev: 4, error: null },
+  { name: "failed", rev: 5, error: "couldn't clone o/r" },
+  { name: "gone", rev: 6, error: null },
+  { name: "refused", rev: 7, error: "not deleted. Push it, or add --force to delete anyway." },
+  { name: "stale", rev: 8, error: null },
+  { name: "nobody", rev: 1, error: null },
+  { name: "made", rev: 99, error: null },
+], 9);
+assert.equal(res.status, 204);
+let results = storage.get("results");
+assert.deepEqual(Object.keys(storage.get("orders")).sort(), ["failed", "made", "refused", "stale"]);
+assert.deepEqual(Object.keys(results).sort(), ["failed", "made", "refused", "stale"]);
+assert.deepEqual({ ...results.made, at: undefined }, { rev: 4, error: null, at: undefined });
+assert.ok(nearNow(results.made.at));
+assert.equal(results.failed.error, "couldn't clone o/r");
+assert.equal(results.stale.rev, 8);
+assert.deepEqual(nudges(), []);
+console.log("PASS: outcomes are stored per order, a finished delete clears its order, and unknown or future outcomes are dropped");
+
+res = await sendOutcomes([], 8);
+assert.deepEqual(nudges(), ["orders"]);
+sockets[0].sent.length = 0;
+res = await call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, workspaces: [] }) });
+assert.deepEqual(nudges(), []);
+console.log("PASS: a report that saw an older order book nudges the computer for another round");
+
+for (const outcomes of [{}, [{ name: "a", rev: "1", error: null }], [{ name: "a", rev: 1 }], [{ name: 1, rev: 1, error: null }], [{ name: "a", rev: -1, error: null }]]) {
+  res = await call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, workspaces: [], outcomes }) });
+  assert.equal(res.status, 400, JSON.stringify(outcomes));
+}
+res = await call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, workspaces: [], seenRev: "1" }) });
+assert.equal(res.status, 400);
+console.log("PASS: malformed outcomes or seenRev are refused");
+
+res = await call("GET", "/orders", { token: "agent" });
+body = await res.json();
+assert.equal(body.rev, 9);
+const byName = Object.fromEntries(body.orders.map((o) => [o.name, o]));
+assert.deepEqual([byName.made.doneRev, byName.made.error], [4, null]);
+assert.deepEqual([byName.failed.doneRev, byName.failed.error], [5, "couldn't clone o/r"]);
+assert.deepEqual([byName.stale.doneRev, byName.stale.error], [8, null]);
+assert.equal(byName.refused.want, "gone");
+console.log("PASS: GET /orders lists every order with its outcome and the latest rev");
+
+resetRecords();
+storage.set("workspaces", [workspace("made"), workspace("hand", { repo: null, work: null })]);
+storage.set("orders", {
+  made: orderRow("made", "running", 4),
+  pending: orderRow("pending", "running", 6, { task: "t", repo: "o/r" }),
+  failed: orderRow("failed", "running", 5, { from: "made" }),
+  retried: orderRow("retried", "running", 8),
+});
+storage.set("results", {
+  made: { rev: 4, error: null, at: old },
+  failed: { rev: 5, error: "boom", at: old },
+  retried: { rev: 7, error: "old failure", at: old },
+});
+body = await getState(runningServer);
+const rows = Object.fromEntries(body.workspaces.map((w) => [w.name, w]));
+assert.deepEqual(body.workspaces.map((w) => w.name), ["made", "hand", "pending", "failed", "retried"]);
+assert.deepEqual([rows.made.state, rows.made.want, rows.made.rev, rows.made.doneRev, rows.made.error], ["running", "running", 4, 4, null]);
+assert.equal(rows.made.branch, "chimera/made");
+assert.deepEqual([rows.hand.want, rows.hand.rev, rows.hand.doneRev, rows.hand.error], [null, null, null, null]);
+assert.deepEqual(rows.pending, {
+  name: "pending", state: null, parent: "base", task: "t", repo: "o/r", branch: null, work: null,
+  want: "running", rev: 6, doneRev: null, error: null,
+});
+assert.deepEqual([rows.failed.parent, rows.failed.doneRev, rows.failed.error], ["made", 5, "boom"]);
+assert.deepEqual([rows.retried.doneRev, rows.retried.error], [7, null]);
+console.log("PASS: /state lists reported containers and orders together, with want, progress and the current error");
+
+res = await call("GET", "/agent", { token: "agent" });
+assert.equal(res.status, 426);
+const RealResponse = globalThis.Response;
+globalThis.WebSocketPair = class { constructor() { this[0] = { side: "client" }; this[1] = fakeSocket(); } };
+globalThis.WebSocketRequestResponsePair = class { constructor(request, response) { Object.assign(this, { request, response }); } };
+globalThis.Response = class { constructor(body, init) { Object.assign(this, { body, ...init }); } };
+resetRecords();
+try {
+  res = await worker.fetch(
+    new Request("https://control.example/agent", { headers: { Authorization: "Bearer agent", Upgrade: "websocket" } }),
+    testEnv(),
+  );
+} finally {
+  globalThis.Response = RealResponse;
+}
+assert.equal(res.status, 101);
+assert.deepEqual(res.webSocket, { side: "client" });
+assert.equal(sockets.length, 1);
+assert.deepEqual([autoResponse.request, autoResponse.response], ["ping", "pong"]);
+await placeOrder(runningServer, { action: "new", name: "z" });
+assert.deepEqual(sockets[0].sent, ["orders"]);
+console.log("PASS: /agent accepts the computer's WebSocket, answers pings while hibernating, and order changes reach it");

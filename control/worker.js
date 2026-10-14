@@ -184,8 +184,55 @@ const validWork = (work) =>
 const validWorkspace = (w) =>
   Boolean(w && isText(w.name) && w.name !== "" && isText(w.state)
     && ["parent", "task", "repo", "branch"].every((key) => isTextOrNull(w[key])) && validWork(w.work));
+const isRev = (value) => Number.isInteger(value) && value >= 0;
+const validOutcome = (o) => Boolean(o && isText(o.name) && isRev(o.rev) && isTextOrNull(o.error));
 const validReport = (body) =>
-  Boolean(body && typeof body.busy === "boolean" && Array.isArray(body.workspaces) && body.workspaces.every(validWorkspace));
+  Boolean(body && typeof body.busy === "boolean" && Array.isArray(body.workspaces) && body.workspaces.every(validWorkspace)
+    && (body.outcomes === undefined || (Array.isArray(body.outcomes) && body.outcomes.every(validOutcome)))
+    && (body.seenRev === undefined || isRev(body.seenRev)));
+
+const isName = (value) => isText(value) && /^[a-z][a-z0-9-]{0,62}$/.test(value) && value !== "base";
+const isRepo = (value) => isText(value) && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
+const maxTaskLength = 2000;
+const optional = (check) => (value) => value === undefined || value === null || check(value);
+const isTask = (value) => isText(value) && value.length <= maxTaskLength;
+
+const adopted = (name) => ({ name, want: null, force: false, from: null, task: null, repo: null });
+const missing = (name) => [404, `There's no container called ${name}.`];
+const taken = (name) => [409, `${name} already exists.`];
+
+function setWant(want) {
+  return ({ name, force }, { orders, known }) => {
+    const order = orders[name];
+    if (!known(name)) return { refused: missing(name) };
+    if (order?.want === "gone" && want !== "gone") return { refused: [409, `${name} is being deleted.`] };
+    return { order: { ...(order ?? adopted(name)), want, force: want === "gone" && force === true } };
+  };
+}
+
+const orderActions = {
+  new: {
+    wakes: true,
+    place: ({ name, task, repo }, { known }) =>
+      known(name) ? { refused: taken(name) } : { order: { name, want: "running", force: false, from: "base", task: task ?? null, repo: repo ?? null } },
+  },
+  fork: {
+    wakes: true,
+    place: ({ name, from, task }, { orders, reported, known }) => {
+      if (from !== "base" && !reported.has(from) && !(orders[from] && orders[from].want !== "gone")) return { refused: missing(from) };
+      if (known(name)) return { refused: taken(name) };
+      return { order: { name, want: "running", force: false, from, task: task ?? null, repo: null } };
+    },
+  },
+  start: { wakes: true, place: setWant("running") },
+  stop: { wakes: false, place: setWant("stopped") },
+  rm: { wakes: true, place: setWant("gone") },
+};
+
+const validOrderRequest = (body) =>
+  Boolean(body && Object.hasOwn(orderActions, body.action) && isName(body.name)
+    && optional(isTask)(body.task) && optional(isRepo)(body.repo) && optional((f) => typeof f === "boolean")(body.force)
+    && (body.action !== "fork" || body.from === "base" || isName(body.from)));
 
 function mergeWorkspaces(incoming, previous, now) {
   const before = new Map(previous.map((w) => [w.name, w]));
@@ -204,7 +251,28 @@ function computerState(server, reportedAt) {
 
 const ageSeconds = (time, now) => (time ? Math.floor((now - Date.parse(time)) / 1000) : null);
 
-function buildState(server, { computer, workspaces }, now) {
+function progress(order, result) {
+  if (!order) return { want: null, rev: null, doneRev: null, error: null };
+  return {
+    want: order.want,
+    rev: order.rev,
+    doneRev: result?.rev ?? null,
+    error: result?.rev === order.rev ? result.error : null,
+  };
+}
+
+function withOrders(workspaces, orders, results) {
+  const reported = new Set(workspaces.map((w) => w.name));
+  return [
+    ...workspaces.map((w) => ({ ...w, ...progress(orders[w.name], results[w.name]) })),
+    ...Object.values(orders).filter((o) => !reported.has(o.name)).map((o) => ({
+      name: o.name, state: null, parent: o.from, task: o.task, repo: o.repo, branch: null, work: null,
+      ...progress(o, results[o.name]),
+    })),
+  ];
+}
+
+function buildState(server, { computer, workspaces, orders, results }, now) {
   return {
     state: computerState(server, computer.reportedAt),
     server: server && {
@@ -216,7 +284,7 @@ function buildState(server, { computer, workspaces }, now) {
     wantAgeSeconds: ageSeconds(computer.wantAt, now),
     busy: computer.busy,
     reportAgeSeconds: ageSeconds(computer.reportedAt, now),
-    workspaces: workspaces.map((w) =>
+    workspaces: withOrders(workspaces, orders, results).map((w) =>
       w.work ? { ...w, work: { ...w.work, checkAgeSeconds: ageSeconds(w.work.checkedAt, now) } } : w),
   };
 }
@@ -227,12 +295,78 @@ export class Records extends DurableObject {
       ?? { want: null, wantAt: null, busy: null, reportedAt: null };
   }
 
-  async report({ busy, workspaces }) {
+  async stored(key, empty) {
+    return (await this.ctx.storage.get(key)) ?? empty;
+  }
+
+  async report({ busy, workspaces, outcomes = [], seenRev }) {
     const now = new Date().toISOString();
-    const previous = (await this.ctx.storage.get("workspaces")) ?? [];
+    const previous = await this.stored("workspaces", []);
     await this.ctx.storage.put("workspaces", mergeWorkspaces(workspaces, previous, now));
     await this.ctx.storage.put("computer", { ...(await this.computer()), busy, reportedAt: now });
+    if (outcomes.length > 0) await this.settle(outcomes, now);
+    if (seenRev !== undefined && (await this.stored("rev", 0)) > seenRev) this.nudge();
   }
+
+  async settle(outcomes, now) {
+    const orders = await this.stored("orders", {});
+    const results = await this.stored("results", {});
+    for (const { name, rev, error } of outcomes) {
+      const order = orders[name];
+      if (!order || rev > order.rev) continue;
+      if (order.want === "gone" && rev === order.rev && error === null) {
+        delete orders[name];
+        delete results[name];
+      } else {
+        results[name] = { rev, error, at: now };
+      }
+    }
+    await this.ctx.storage.put("orders", orders);
+    await this.ctx.storage.put("results", results);
+  }
+
+  async order(request) {
+    const orders = await this.stored("orders", {});
+    const reported = new Set((await this.stored("workspaces", [])).map((w) => w.name));
+    const known = (name) => Boolean(orders[name]) || reported.has(name);
+    const placed = orderActions[request.action].place(request, { orders, reported, known });
+    if (placed.refused) return placed;
+    const rev = (await this.stored("rev", 0)) + 1;
+    orders[request.name] = { ...placed.order, rev, orderedAt: new Date().toISOString() };
+    await this.ctx.storage.put("orders", orders);
+    await this.ctx.storage.put("rev", rev);
+    this.nudge();
+    return { rev };
+  }
+
+  async orders() {
+    const orders = await this.stored("orders", {});
+    const results = await this.stored("results", {});
+    return {
+      orders: Object.values(orders).map((o) => ({ ...o, ...progress(o, results[o.name]) })),
+      rev: await this.stored("rev", 0),
+    };
+  }
+
+  nudge() {
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.send("orders");
+      } catch {
+        // A closing socket can't take messages. The computer runs a round when it reconnects.
+      }
+    }
+  }
+
+  async fetch(request) {
+    if (request.headers.get("Upgrade") !== "websocket") return text("Expected a WebSocket.", 426);
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  webSocketMessage() {}
 
   async setWant(want) {
     const computer = await this.computer();
@@ -241,11 +375,16 @@ export class Records extends DurableObject {
   }
 
   async read() {
-    return { computer: await this.computer(), workspaces: (await this.ctx.storage.get("workspaces")) ?? [] };
+    return {
+      computer: await this.computer(),
+      workspaces: await this.stored("workspaces", []),
+      orders: await this.stored("orders", {}),
+      results: await this.stored("results", {}),
+    };
   }
 }
 
-async function wake(request, env) {
+async function wakeServer(env) {
   const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
   const server = servers[0];
   const outcome = wakeByStatus[server ? server.status : "none"] ?? "busy";
@@ -257,9 +396,32 @@ async function wake(request, env) {
     await deleteAndWait(env, server.id);
     await createServer(env);
   }
-  const [status, message] = replies[outcome];
-  if (status < 400) await records(env).setWant("awake");
+  if (replies[outcome][0] < 400) await records(env).setWant("awake");
+  return outcome;
+}
+
+async function wake(request, env) {
+  const [status, message] = replies[await wakeServer(env)];
   return text(message, status);
+}
+
+const json = (body) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+
+async function placeOrder(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!validOrderRequest(body)) return text("Bad order.", 400);
+  const placed = await records(env).order(body);
+  if (placed.refused) return text(placed.refused[1], placed.refused[0]);
+  const outcome = orderActions[body.action].wakes ? await wakeServer(env) : null;
+  return json({ rev: placed.rev, woke: outcome === "create" || outcome === "replace" ? outcome : null });
+}
+
+async function listOrders(request, env) {
+  return json(await records(env).orders());
+}
+
+async function agent(request, env) {
+  return records(env).fetch(request);
 }
 
 async function report(request, env) {
@@ -278,15 +440,17 @@ async function want(request, env) {
 
 async function state(request, env) {
   const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
-  const body = buildState(servers[0] ?? null, await records(env).read(), Date.now());
-  return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+  return json(buildState(servers[0] ?? null, await records(env).read(), Date.now()));
 }
 
 const routes = {
-  "POST /wake": ["WAKE_TOKEN", wake],
-  "POST /want": ["WAKE_TOKEN", want],
-  "GET /state": ["WAKE_TOKEN", state],
-  "POST /report": ["AGENT_TOKEN", report],
+  "POST /wake": [["WAKE_TOKEN"], wake],
+  "POST /want": [["WAKE_TOKEN"], want],
+  "GET /state": [["WAKE_TOKEN", "AGENT_TOKEN"], state],
+  "POST /orders": [["WAKE_TOKEN", "AGENT_TOKEN"], placeOrder],
+  "GET /orders": [["AGENT_TOKEN"], listOrders],
+  "POST /report": [["AGENT_TOKEN"], report],
+  "GET /agent": [["AGENT_TOKEN"], agent],
 };
 
 function authorized(request, secret) {
@@ -312,8 +476,8 @@ export default {
   async fetch(request, env) {
     const route = routes[`${request.method} ${new URL(request.url).pathname}`];
     if (!route) return text("Not found.", 404);
-    const [tokenName, handle] = route;
-    if (!authorized(request, env[tokenName])) return text("Wrong password.", 401);
+    const [tokenNames, handle] = route;
+    if (!tokenNames.some((tokenName) => authorized(request, env[tokenName]))) return text("Wrong password.", 401);
     return handle(request, env);
   },
 };
