@@ -1,673 +1,673 @@
 #cloud-config
 
 users:
-  - name: andre
-    uid: 1000
-    shell: /bin/bash
-    groups: [sudo, docker, incus-admin]
-    sudo: "ALL=(ALL) NOPASSWD:ALL"
-    lock_passwd: true
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrotfaJoO9CHVMrDKobM82hmNsCrrGsx/WfZg0kkPeV laptop
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA59oRQ1l1QV0EVN2tCkxH2VY3Gqw0DdmQ9s1GGjG8gj phone
+- name: andre
+  uid: 1000
+  shell: /bin/bash
+  groups: [sudo, docker, incus-admin]
+  sudo: "ALL=(ALL) NOPASSWD:ALL"
+  lock_passwd: true
+  ssh_authorized_keys:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrotfaJoO9CHVMrDKobM82hmNsCrrGsx/WfZg0kkPeV laptop
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA59oRQ1l1QV0EVN2tCkxH2VY3Gqw0DdmQ9s1GGjG8gj phone
 
 disable_root: true
 ssh_pwauth: false
 ssh_deletekeys: false
 
 bootcmd:
-  - |
-    set -eu
-    keys=/home/.chimera/ssh-host-keys
+- |
+  set -eu
+  keys=/home/.chimera/ssh-host-keys
 
-    blank() { rc=0; blkid -p "$1" >/dev/null || rc=$?; [ "$rc" -eq 2 ]; }
+  blank() { rc=0; blkid -p "$1" >/dev/null || rc=$?; [ "$rc" -eq 2 ]; }
 
-    for _ in $(seq 60); do
-      set -- /dev/disk/by-id/scsi-0HC_Volume_*
-      [ $# -eq 2 ] && break
-      sleep 1
-    done
-    [ $# -eq 2 ] || { echo "chimera: expected two volumes (chimera-home, chimera-machines), found $*" >&2; exit 1; }
+  for _ in $(seq 60); do
+    set -- /dev/disk/by-id/scsi-0HC_Volume_*
+    [ $# -eq 2 ] && break
+    sleep 1
+  done
+  [ $# -eq 2 ] || { echo "chimera: expected two volumes (chimera-home, chimera-machines), found $*" >&2; exit 1; }
 
-    home=$(blkid -L chimera-home || true)
-    if [ -z "$home" ]; then
-      for d; do blank "$d" || continue; [ -z "$home" ] || { echo "chimera: both volumes are blank, can't tell which is /home" >&2; exit 1; }; home=$d; done
-      [ -n "$home" ] || { echo "chimera: no volume is labelled chimera-home and none is blank" >&2; exit 1; }
-      mkfs.ext4 -L chimera-home "$home"
-    fi
-    for d; do [ "$(readlink -f "$d")" = "$(readlink -f "$home")" ] || machines=$d; done
-    install -d /run/chimera && echo "$machines" > /run/chimera/machines-disk
+  home=$(blkid -L chimera-home || true)
+  if [ -z "$home" ]; then
+    for d; do blank "$d" || continue; [ -z "$home" ] || { echo "chimera: both volumes are blank, can't tell which is /home" >&2; exit 1; }; home=$d; done
+    [ -n "$home" ] || { echo "chimera: no volume is labelled chimera-home and none is blank" >&2; exit 1; }
+    mkfs.ext4 -L chimera-home "$home"
+  fi
+  for d; do [ "$(readlink -f "$d")" = "$(readlink -f "$home")" ] || machines=$d; done
+  install -d /run/chimera && echo "$machines" > /run/chimera/machines-disk
 
-    mountpoint -q /home || mount "$home" /home
-    resize2fs "$home" || echo "chimera: couldn't grow /home to the volume size" >&2
+  mountpoint -q /home || mount "$home" /home
+  resize2fs "$home" || echo "chimera: couldn't grow /home to the volume size" >&2
 
-    rm -f /etc/ssh/ssh_host_*
-    if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
+  rm -f /etc/ssh/ssh_host_*
+  if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
 
-    install -d -m 700 /home/.chimera/tailscale /var/lib/tailscale
-    mountpoint -q /var/lib/tailscale || mount --bind /home/.chimera/tailscale /var/lib/tailscale
+  install -d -m 700 /home/.chimera/tailscale /var/lib/tailscale
+  mountpoint -q /var/lib/tailscale || mount --bind /home/.chimera/tailscale /var/lib/tailscale
 
-    install -d -m 710 /home/.chimera/docker /var/lib/docker
-    mountpoint -q /var/lib/docker || mount --bind /home/.chimera/docker /var/lib/docker
-    install -d -m 711 /home/.chimera/containerd /var/lib/containerd
-    mountpoint -q /var/lib/containerd || mount --bind /home/.chimera/containerd /var/lib/containerd
-    install -d -m 711 /home/.chimera/incus /var/lib/incus
-    mountpoint -q /var/lib/incus || mount --bind /home/.chimera/incus /var/lib/incus
+  install -d -m 710 /home/.chimera/docker /var/lib/docker
+  mountpoint -q /var/lib/docker || mount --bind /home/.chimera/docker /var/lib/docker
+  install -d -m 711 /home/.chimera/containerd /var/lib/containerd
+  mountpoint -q /var/lib/containerd || mount --bind /home/.chimera/containerd /var/lib/containerd
+  install -d -m 711 /home/.chimera/incus /var/lib/incus
+  mountpoint -q /var/lib/incus || mount --bind /home/.chimera/incus /var/lib/incus
 
 write_files:
-  # Docker otherwise sets the kernel's forwarding policy to drop, which cuts Incus containers off the internet.
-  - path: /etc/docker/daemon.json
-    content: |
-      {"ip-forward-no-drop": true}
-  - path: /etc/chimera/firewall.nft
-    content: |
-      table inet chimera
-      delete table inet chimera
-      table inet chimera {
-      	chain forward {
-      		type filter hook forward priority filter - 1; policy accept;
-      		iifname "incusbr0" oifname "tailscale0" ct state new drop
-      	}
-      }
-  - path: /etc/systemd/system/chimera-firewall.service
-    content: |
-      [Unit]
-      Description=Keep containers from opening connections to tailnet devices
-      Before=incus.service incus-startup.service tailscaled.service
+# Docker otherwise sets the kernel's forwarding policy to drop, which cuts Incus containers off the internet.
+- path: /etc/docker/daemon.json
+  content: |
+    {"ip-forward-no-drop": true}
+- path: /etc/chimera/firewall.nft
+  content: |
+    table inet chimera
+    delete table inet chimera
+    table inet chimera {
+    	chain forward {
+    		type filter hook forward priority filter - 1; policy accept;
+    		iifname "incusbr0" oifname "tailscale0" ct state new drop
+    	}
+    }
+- path: /etc/systemd/system/chimera-firewall.service
+  content: |
+    [Unit]
+    Description=Keep containers from opening connections to tailnet devices
+    Before=incus.service incus-startup.service tailscaled.service
 
-      [Service]
-      Type=oneshot
-      RemainAfterExit=yes
-      ExecStart=/usr/sbin/nft -f /etc/chimera/firewall.nft
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    ExecStart=/usr/sbin/nft -f /etc/chimera/firewall.nft
 
-      [Install]
-      WantedBy=multi-user.target
-  - path: /etc/systemd/system/incus.service.d/chimera.conf
-    content: |
-      [Unit]
-      RequiresMountsFor=/var/lib/incus
-      Requires=chimera-firewall.service
-      After=chimera-firewall.service
-  - path: /usr/local/bin/chimera
-    permissions: "0755"
-    content: |
-      #!/bin/bash
-      set -euo pipefail
+    [Install]
+    WantedBy=multi-user.target
+- path: /etc/systemd/system/incus.service.d/chimera.conf
+  content: |
+    [Unit]
+    RequiresMountsFor=/var/lib/incus
+    Requires=chimera-firewall.service
+    After=chimera-firewall.service
+- path: /usr/local/bin/chimera
+  permissions: "0755"
+  content: |
+    #!/bin/bash
+    set -euo pipefail
 
-      secrets=/home/andre/.config/chimera/secrets
-      setup=/usr/local/share/chimera/base-setup.sh
-      report=/usr/local/share/chimera/report.py
+    secrets=/home/andre/.config/chimera/secrets
+    setup=/usr/local/share/chimera/base-setup.sh
+    report=/usr/local/share/chimera/report.py
 
-      die() { echo "chimera: $*" >&2; exit 1; }
-      exists() { incus info "$1" >/dev/null 2>&1; }
-      running() { [ "$(incus list "^$1\$" -c s -f csv)" = RUNNING ]; }
-      need() { exists "$1" || die "there's no container called $1"; }
-      not_base() { [ "$1" != base ] || die "base only changes through 'chimera base'. Fork it with 'chimera new' instead."; }
-      valid() { [[ $1 =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "'$1' isn't a valid name. Use lowercase letters, digits and dashes."; }
+    die() { echo "chimera: $*" >&2; exit 1; }
+    exists() { incus info "$1" >/dev/null 2>&1; }
+    running() { [ "$(incus list "^$1\$" -c s -f csv)" = RUNNING ]; }
+    need() { exists "$1" || die "there's no container called $1"; }
+    not_base() { [ "$1" != base ] || die "base only changes through 'chimera base'. Fork it with 'chimera new' instead."; }
+    valid() { [[ $1 =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "'$1' isn't a valid name. Use lowercase letters, digits and dashes."; }
 
-      ready() {
-        running "$1" || incus start "$1"
-        for _ in $(seq 150); do
-          incus exec "$1" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && return
-          sleep 0.2
-        done
-        die "$1 didn't get a network within 30 seconds"
-      }
+    ready() {
+      running "$1" || incus start "$1"
+      for _ in $(seq 150); do
+        incus exec "$1" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && return
+        sleep 0.2
+      done
+      die "$1 didn't get a network within 30 seconds"
+    }
 
-      repo_dir() {
-        local repo
-        repo=$(incus config get "$1" user.chimera.repo)
-        if [ -n "$repo" ]; then echo "/home/andre/${repo#*/}"; else echo /home/andre; fi
-      }
+    repo_dir() {
+      local repo
+      repo=$(incus config get "$1" user.chimera.repo)
+      if [ -n "$repo" ]; then echo "/home/andre/${repo#*/}"; else echo /home/andre; fi
+    }
 
-      git_in() {
-        local name=$1 dir
-        shift
-        dir=$(repo_dir "$name")
-        incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec git "$@"' bash "$dir" "$@"
-      }
+    git_in() {
+      local name=$1 dir
+      shift
+      dir=$(repo_dir "$name")
+      incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec git "$@"' bash "$dir" "$@"
+    }
 
-      lost_work() {
-        lost_dirty=$(git_in "$1" status --porcelain)
-        lost_unpushed=
-        git_in "$1" fetch --prune -q origin || return 2
-        lost_unpushed=$(git_in "$1" log --oneline --branches --not --remotes)
-        [ -z "$lost_dirty$lost_unpushed" ]
-      }
+    lost_work() {
+      lost_dirty=$(git_in "$1" status --porcelain)
+      lost_unpushed=
+      git_in "$1" fetch --prune -q origin || return 2
+      lost_unpushed=$(git_in "$1" log --oneline --branches --not --remotes)
+      [ -z "$lost_dirty$lost_unpushed" ]
+    }
 
-      show_lost() {
-        [ -z "$lost_dirty" ] || printf 'Uncommitted files:\n%s\n' "$lost_dirty"
-        [ -z "$lost_unpushed" ] || printf 'Commits not on GitHub:\n%s\n' "$lost_unpushed"
-      }
+    show_lost() {
+      [ -z "$lost_dirty" ] || printf 'Uncommitted files:\n%s\n' "$lost_dirty"
+      [ -z "$lost_unpushed" ] || printf 'Commits not on GitHub:\n%s\n' "$lost_unpushed"
+    }
 
-      copy() {
-        local from=$1 name=$2 task=${3:-} repo
-        valid "$name"
-        need "$from"
-        exists "$name" && die "$name already exists"
-        repo=$(incus config get "$from" user.chimera.repo)
-        incus copy "$from" "$name"
-        incus config set "$name" user.chimera.parent="$from"
-        if [ -n "$task" ]; then incus config set "$name" user.chimera.task="$task"; else incus config unset "$name" user.chimera.task 2>/dev/null || true; fi
-        if [ -z "$repo" ]; then
-          incus config unset "$name" user.chimera.repo 2>/dev/null || true
-          incus config unset "$name" user.chimera.branch 2>/dev/null || true
+    copy() {
+      local from=$1 name=$2 task=${3:-} repo
+      valid "$name"
+      need "$from"
+      exists "$name" && die "$name already exists"
+      repo=$(incus config get "$from" user.chimera.repo)
+      incus copy "$from" "$name"
+      incus config set "$name" user.chimera.parent="$from"
+      if [ -n "$task" ]; then incus config set "$name" user.chimera.task="$task"; else incus config unset "$name" user.chimera.task 2>/dev/null || true; fi
+      if [ -z "$repo" ]; then
+        incus config unset "$name" user.chimera.repo 2>/dev/null || true
+        incus config unset "$name" user.chimera.branch 2>/dev/null || true
+      fi
+      ready "$name"
+    }
+
+    cmd_new() {
+      [ $# -ge 1 ] || die "usage: chimera new NAME [TASK] [--repo OWNER/REPO]"
+      local name=$1 task= repo=
+      shift
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --repo) [ $# -ge 2 ] || die "--repo needs OWNER/REPO"; repo=$2; shift 2 ;;
+          *) [ -z "$task" ] || die "usage: chimera new NAME [TASK] [--repo OWNER/REPO]"; task=$1; shift ;;
+        esac
+      done
+      [[ -z $repo || $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "'$repo' isn't a valid repo. Use OWNER/REPO."
+      exists base || die "there's no base container yet. Build it with 'chimera base'."
+      copy base "$name" "$task"
+      if [ -n "$repo" ]; then
+        if ! incus exec "$name" -- sudo -u andre -H bash -lc 'gh repo clone "$1" "$2" -- -q && git -C "$2" switch -q -c "$3"' bash "$repo" "/home/andre/${repo#*/}" "chimera/$name"; then
+          incus delete -f "$name"
+          die "couldn't clone $repo, so $name was deleted. Check the name and that your GitHub token can read it."
         fi
-        ready "$name"
-      }
+        incus config set "$name" user.chimera.repo="$repo"
+        incus config set "$name" user.chimera.branch="chimera/$name"
+        echo "$name is ready, on branch chimera/$name of $repo. Apps it serves open at http://$name.ws:PORT"
+      else
+        echo "$name is ready. Apps it serves open at http://$name.ws:PORT"
+      fi
+    }
 
-      cmd_new() {
-        [ $# -ge 1 ] || die "usage: chimera new NAME [TASK] [--repo OWNER/REPO]"
-        local name=$1 task= repo=
-        shift
-        while [ $# -gt 0 ]; do
-          case "$1" in
-            --repo) [ $# -ge 2 ] || die "--repo needs OWNER/REPO"; repo=$2; shift 2 ;;
-            *) [ -z "$task" ] || die "usage: chimera new NAME [TASK] [--repo OWNER/REPO]"; task=$1; shift ;;
-          esac
-        done
-        [[ -z $repo || $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "'$repo' isn't a valid repo. Use OWNER/REPO."
-        exists base || die "there's no base container yet. Build it with 'chimera base'."
-        copy base "$name" "$task"
-        if [ -n "$repo" ]; then
-          if ! incus exec "$name" -- sudo -u andre -H bash -lc 'gh repo clone "$1" "$2" -- -q && git -C "$2" switch -q -c "$3"' bash "$repo" "/home/andre/${repo#*/}" "chimera/$name"; then
-            incus delete -f "$name"
-            die "couldn't clone $repo, so $name was deleted. Check the name and that your GitHub token can read it."
-          fi
-          incus config set "$name" user.chimera.repo="$repo"
-          incus config set "$name" user.chimera.branch="chimera/$name"
-          echo "$name is ready, on branch chimera/$name of $repo. Apps it serves open at http://$name.ws:PORT"
-        else
-          echo "$name is ready. Apps it serves open at http://$name.ws:PORT"
+    cmd_fork() {
+      [ $# -ge 2 ] || die "usage: chimera fork FROM NAME [TASK]"
+      copy "$1" "$2" "${3:-}"
+      if [ -n "$(incus config get "$2" user.chimera.repo)" ]; then
+        if ! git_in "$2" switch -q -c "chimera/$2"; then
+          incus delete -f "$2"
+          die "couldn't make branch chimera/$2, so $2 was deleted"
         fi
-      }
+        incus config set "$2" user.chimera.branch="chimera/$2"
+        echo "$2 is ready, on branch chimera/$2. Apps it serves open at http://$2.ws:PORT"
+      else
+        echo "$2 is ready. Apps it serves open at http://$2.ws:PORT"
+      fi
+    }
 
-      cmd_fork() {
-        [ $# -ge 2 ] || die "usage: chimera fork FROM NAME [TASK]"
-        copy "$1" "$2" "${3:-}"
-        if [ -n "$(incus config get "$2" user.chimera.repo)" ]; then
-          if ! git_in "$2" switch -q -c "chimera/$2"; then
-            incus delete -f "$2"
-            die "couldn't make branch chimera/$2, so $2 was deleted"
-          fi
-          incus config set "$2" user.chimera.branch="chimera/$2"
-          echo "$2 is ready, on branch chimera/$2. Apps it serves open at http://$2.ws:PORT"
-        else
-          echo "$2 is ready. Apps it serves open at http://$2.ws:PORT"
-        fi
-      }
+    cmd_ls() {
+      incus list -c n,s,user.chimera.parent:FROM,user.chimera.task:TASK,user.chimera.repo:REPO,user.chimera.branch:BRANCH,c "$@"
+    }
 
-      cmd_ls() {
-        incus list -c n,s,user.chimera.parent:FROM,user.chimera.task:TASK,user.chimera.repo:REPO,user.chimera.branch:BRANCH,c "$@"
-      }
+    cmd_report() {
+      local dir json name rc busy=false
+      dir=$(mktemp -d)
+      trap "rm -rf '$dir'" EXIT
+      if ! flock -n -x /var/lib/chimera-awake/awake.lock true; then busy=true; fi
+      json=$(incus list -f json)
+      for name in $(python3 "$report" names <<<"$json"); do
+        rc=0
+        lost_dirty= lost_unpushed=
+        lost_work "$name" </dev/null >/dev/null || rc=$?
+        printf '%s' "$lost_unpushed" > "$dir/$name.unpushed"
+        printf '%s' "$lost_dirty" > "$dir/$name.uncommitted"
+        echo "$rc" > "$dir/$name.rc"
+      done
+      python3 "$report" build "$dir" "$busy" <<<"$json"
+    }
 
-      cmd_report() {
-        local dir json name rc busy=false
-        dir=$(mktemp -d)
-        trap "rm -rf '$dir'" EXIT
-        if ! flock -n -x /var/lib/chimera-awake/awake.lock true; then busy=true; fi
-        json=$(incus list -f json)
-        for name in $(python3 "$report" names <<<"$json"); do
-          rc=0
-          lost_dirty= lost_unpushed=
-          lost_work "$name" </dev/null >/dev/null || rc=$?
-          printf '%s' "$lost_unpushed" > "$dir/$name.unpushed"
-          printf '%s' "$lost_dirty" > "$dir/$name.uncommitted"
-          echo "$rc" > "$dir/$name.rc"
-        done
-        python3 "$report" build "$dir" "$busy" <<<"$json"
-      }
+    cmd_results() {
+      [ $# -ge 1 ] || die "usage: chimera results NAME [--diff]"
+      local name=$1 repo task rc=0 count s
+      not_base "$name"
+      need "$name"
+      case "${2:-}" in ""|--diff) ;; *) die "usage: chimera results NAME [--diff]" ;; esac
+      repo=$(incus config get "$name" user.chimera.repo)
+      if [ -z "$repo" ]; then echo "$name has no repo."; return; fi
+      task=$(incus config get "$name" user.chimera.task)
+      ready "$name"
+      lost_work "$name" || rc=$?
+      echo "Repo: $repo"
+      echo "Branch: $(incus config get "$name" user.chimera.branch)"
+      [ -z "$task" ] || echo "Task: $task"
+      echo
+      echo "Commits on the branch:"
+      git_in "$name" log --oneline origin/HEAD..HEAD | sed 's/^/  /' | grep . || echo "  no commits yet"
+      echo
+      echo "Uncommitted files:"
+      git_in "$name" status --short | sed 's/^/  /' | grep . || echo "  nothing uncommitted"
+      echo
+      if [ "$rc" = 2 ]; then
+        echo "Couldn't check GitHub."
+      elif [ -n "$lost_unpushed" ]; then
+        count=$(printf '%s\n' "$lost_unpushed" | wc -l | tr -d ' ')
+        s=s; [ "$count" = 1 ] && s=
+        echo "$count commit$s not on GitHub:"
+        printf '%s\n' "$lost_unpushed" | sed 's/^/  /'
+      elif [ -n "$lost_dirty" ]; then
+        echo "Every commit is on GitHub, but the uncommitted files are not."
+      else
+        echo "Nothing to lose: everything is pushed."
+      fi
+      if [ "${2:-}" = --diff ]; then
+        echo
+        echo "Changes to tracked files compared with the default branch (untracked files are not included):"
+        git_in "$name" diff origin/HEAD
+      fi
+    }
 
-      cmd_results() {
-        [ $# -ge 1 ] || die "usage: chimera results NAME [--diff]"
-        local name=$1 repo task rc=0 count s
-        not_base "$name"
-        need "$name"
-        case "${2:-}" in ""|--diff) ;; *) die "usage: chimera results NAME [--diff]" ;; esac
-        repo=$(incus config get "$name" user.chimera.repo)
-        if [ -z "$repo" ]; then echo "$name has no repo."; return; fi
-        task=$(incus config get "$name" user.chimera.task)
+    cmd_run() {
+      [ $# -ge 1 ] || die "usage: chimera run NAME -- COMMAND"
+      local name=$1 script
+      shift
+      [ "${1:-}" != -- ] || shift
+      [ $# -ge 1 ] || die "usage: chimera run NAME -- COMMAND"
+      not_base "$name"
+      need "$name"
+      ready "$name"
+      script=/tmp/chimera-run-$(date +%s%N).sh
+      { printf 'cd %q\n' "$(repo_dir "$name")"; printf '%q ' "$@"; } | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
+      incus exec "$name" -- sudo -iu andre sh -c \
+        "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'awake bash -l $script; exec bash -l'"
+      echo "Started in $name. Watch it with 'chimera shell $name'."
+    }
+
+    cmd_shell() {
+      [ $# -ge 1 ] || die "usage: chimera shell NAME [COMMAND]"
+      local name=$1 dir
+      shift
+      not_base "$name"
+      need "$name"
+      ready "$name"
+      dir=$(repo_dir "$name")
+      if [ $# -eq 0 ]; then
+        exec incus exec "$name" -- sudo -iu andre tmux new-session -A -s main -c "$dir"
+      fi
+      exec incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec "$@"' bash "$dir" "$@"
+    }
+
+    cmd_rm() {
+      [ $# -ge 1 ] || die "usage: chimera rm NAME [--yes|--force]"
+      local name=$1 flag=${2:-} answer rc=0
+      not_base "$name"
+      need "$name"
+      case "$flag" in ""|--yes|--force) ;; *) die "usage: chimera rm NAME [--yes|--force]" ;; esac
+      if [ -n "$(incus config get "$name" user.chimera.repo)" ] && [ "$flag" != --force ]; then
         ready "$name"
         lost_work "$name" || rc=$?
-        echo "Repo: $repo"
-        echo "Branch: $(incus config get "$name" user.chimera.branch)"
-        [ -z "$task" ] || echo "Task: $task"
-        echo
-        echo "Commits on the branch:"
-        git_in "$name" log --oneline origin/HEAD..HEAD | sed 's/^/  /' | grep . || echo "  no commits yet"
-        echo
-        echo "Uncommitted files:"
-        git_in "$name" status --short | sed 's/^/  /' | grep . || echo "  nothing uncommitted"
-        echo
-        if [ "$rc" = 2 ]; then
-          echo "Couldn't check GitHub."
-        elif [ -n "$lost_unpushed" ]; then
-          count=$(printf '%s\n' "$lost_unpushed" | wc -l | tr -d ' ')
-          s=s; [ "$count" = 1 ] && s=
-          echo "$count commit$s not on GitHub:"
-          printf '%s\n' "$lost_unpushed" | sed 's/^/  /'
-        elif [ -n "$lost_dirty" ]; then
-          echo "Every commit is on GitHub, but the uncommitted files are not."
-        else
-          echo "Nothing to lose: everything is pushed."
+        [ "$rc" != 2 ] || die "couldn't check GitHub, so $name was not deleted. Try again, or add --force to delete anyway."
+        if [ "$rc" = 1 ]; then
+          show_lost >&2
+          die "not deleted. Push it, or add --force to delete anyway."
         fi
-        if [ "${2:-}" = --diff ]; then
-          echo
-          echo "Changes to tracked files compared with the default branch (untracked files are not included):"
-          git_in "$name" diff origin/HEAD
-        fi
-      }
-
-      cmd_run() {
-        [ $# -ge 1 ] || die "usage: chimera run NAME -- COMMAND"
-        local name=$1 script
-        shift
-        [ "${1:-}" != -- ] || shift
-        [ $# -ge 1 ] || die "usage: chimera run NAME -- COMMAND"
-        not_base "$name"
-        need "$name"
-        ready "$name"
-        script=/tmp/chimera-run-$(date +%s%N).sh
-        { printf 'cd %q\n' "$(repo_dir "$name")"; printf '%q ' "$@"; } | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
-        incus exec "$name" -- sudo -iu andre sh -c \
-          "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'awake bash -l $script; exec bash -l'"
-        echo "Started in $name. Watch it with 'chimera shell $name'."
-      }
-
-      cmd_shell() {
-        [ $# -ge 1 ] || die "usage: chimera shell NAME [COMMAND]"
-        local name=$1 dir
-        shift
-        not_base "$name"
-        need "$name"
-        ready "$name"
-        dir=$(repo_dir "$name")
-        if [ $# -eq 0 ]; then
-          exec incus exec "$name" -- sudo -iu andre tmux new-session -A -s main -c "$dir"
-        fi
-        exec incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec "$@"' bash "$dir" "$@"
-      }
-
-      cmd_rm() {
-        [ $# -ge 1 ] || die "usage: chimera rm NAME [--yes|--force]"
-        local name=$1 flag=${2:-} answer rc=0
-        not_base "$name"
-        need "$name"
-        case "$flag" in ""|--yes|--force) ;; *) die "usage: chimera rm NAME [--yes|--force]" ;; esac
-        if [ -n "$(incus config get "$name" user.chimera.repo)" ] && [ "$flag" != --force ]; then
-          ready "$name"
-          lost_work "$name" || rc=$?
-          [ "$rc" != 2 ] || die "couldn't check GitHub, so $name was not deleted. Try again, or add --force to delete anyway."
-          if [ "$rc" = 1 ]; then
-            show_lost >&2
-            die "not deleted. Push it, or add --force to delete anyway."
-          fi
-        fi
-        if [ -z "$flag" ]; then
-          [ -t 0 ] || die "add --yes to delete $name without a terminal"
-          read -rp "$name isn't backed up. Type its name to delete it: " answer
-          [ "$answer" = "$name" ] || die "not deleted"
-        fi
-        incus delete -f "$name"
-        echo "deleted $name"
-      }
-
-      cmd_secret() {
-        local value
-        case "${1:-}" in claude|github) ;; *) die "usage: chimera secret claude|github" ;; esac
-        if [ -t 0 ]; then read -rsp "Paste the $1 token: " value; echo; else read -r value; fi
-        [ -n "$value" ] || die "the token is empty"
-        install -d -m 700 "$secrets"
-        (umask 077 && printf '%s\n' "$value" > "$secrets/$1")
-        echo "Saved. Run 'chimera base' so new containers get it."
-      }
-
-      secret_env() {
-        local file=$secrets/$1
-        if [ -s "$file" ]; then
-          echo "export $2=$(printf %q "$(cat "$file")")"
-        else
-          echo "chimera: no $1 token yet, so new containers won't have one. Add it with 'chimera secret $1'." >&2
-        fi
-      }
-
-      cmd_base() {
-        incus delete -f base-new >/dev/null 2>&1 || true
-        incus launch images:ubuntu/24.04 base-new -c security.nesting=true -c limits.memory=1536MiB >/dev/null
-        ready base-new
-        incus file push "$setup" base-new/root/base-setup.sh
-        incus exec base-new -- bash /root/base-setup.sh </dev/null
-        incus file push --mode 0755 /usr/local/bin/awake /usr/local/bin/chimera-agent-busy base-new/usr/local/bin/
-        incus file push -p /etc/claude-code/managed-settings.json base-new/etc/claude-code/managed-settings.json
-        { secret_env claude CLAUDE_CODE_OAUTH_TOKEN; secret_env github GH_TOKEN; } \
-          | incus exec base-new -- sh -c 'umask 077 && cat > /home/andre/.config/chimera/env && chown andre:andre /home/andre/.config/chimera/env'
-        incus stop base-new
-        incus delete -f base >/dev/null 2>&1 || true
-        incus move base-new base
-        echo "base is ready. New containers start from it."
-      }
-
-      cmd=${1:-}
-      shift || true
-      case "$cmd" in
-        new|fork|ls|results|report|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
-        *) die "usage: chimera new|fork|ls|results|report|run|shell|rm|secret|base" ;;
-      esac
-  - path: /usr/local/share/chimera/base-setup.sh
-    content: |
-      set -euo pipefail
-      export DEBIAN_FRONTEND=noninteractive
-
-      usermod -l andre -d /home/andre -m ubuntu
-      groupmod -n andre ubuntu
-      sed -i 's/^ubuntu /andre /' /etc/sudoers.d/*
-
-      install -d -m 755 /etc/apt/keyrings
-      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
-      echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
-      apt-get update -q
-      apt-get install -yq git tmux curl ca-certificates jq ripgrep build-essential docker.io gh
-      apt-get clean
-      usermod -aG docker andre
-
-      sudo -iu andre bash <<'EOF'
-      set -euo pipefail
-      curl -fsSL https://claude.ai/install.sh | bash
-      [ -e ~/.claude.json ] || echo '{"hasCompletedOnboarding": true}' > ~/.claude.json
-      install -d -m 700 ~/.config/chimera
-      echo '[ -f ~/.config/chimera/env ] && . ~/.config/chimera/env' >> ~/.profile
-      git config --global user.name "Andre Ramos"
-      git config --global user.email ralphandrer04@gmail.com
-      git config --global credential.https://github.com.helper '!gh auth git-credential'
-      EOF
-  - path: /usr/local/share/chimera/report.py
-    content: |
-      import json, sys
-
-      def lines(path):
-          try:
-              with open(path) as f:
-                  return f.read().splitlines()
-          except OSError:
-              return None
-
-      def meta(container, key):
-          return container["config"].get("user.chimera." + key) or None
-
-      def work(directory, name):
-          rc = lines(f"{directory}/{name}.rc")
-          if rc is None:
-              return None
-          return {
-              "unpushed": lines(f"{directory}/{name}.unpushed") or [],
-              "uncommitted": lines(f"{directory}/{name}.uncommitted") or [],
-              "error": "couldn't reach GitHub" if rc == ["2"] else None,
-          }
-
-      def workspace(directory, container):
-          return {
-              "name": container["name"],
-              "state": container["status"].lower(),
-              "parent": meta(container, "parent"),
-              "task": meta(container, "task"),
-              "repo": meta(container, "repo"),
-              "branch": meta(container, "branch"),
-              "work": work(directory, container["name"]),
-          }
-
-      containers = [c for c in json.load(sys.stdin) if c["name"] != "base"]
-      if sys.argv[1] == "names":
-          print("\n".join(c["name"] for c in containers if c["status"] == "Running" and meta(c, "repo")))
-      else:
-          directory, busy = sys.argv[2], sys.argv[3] == "true"
-          print(json.dumps({"busy": busy, "workspaces": [workspace(directory, c) for c in containers]}))
-  - path: /usr/local/bin/chimera-agent
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      set -eu
-      token=/home/.chimera/agent-token
-      if [ ! -s "$token" ]; then
-        echo "chimera-agent: no token yet, skipping report"
-        exit 0
       fi
-      umask 077
-      dir=$(mktemp -d)
-      trap 'rm -rf "$dir"' EXIT
-      printf 'Authorization: Bearer %s\n' "$(cat "$token")" > "$dir/header"
-      chimera report > "$dir/report.json"
-      curl -fsS --max-time 60 -H @"$dir/header" -H 'Content-Type: application/json' \
-        --data-binary @"$dir/report.json" https://chimera-control.ralphandrer04.workers.dev/report
-  - path: /etc/systemd/system/chimera-report.service
-    content: |
-      [Unit]
-      Description=Tell the Worker what the computer and its containers are doing
-      Wants=network-online.target
-      After=network-online.target incus.service
-
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/local/bin/chimera-agent
-      TimeoutStartSec=3min
-  - path: /etc/systemd/system/chimera-report.timer
-    content: |
-      [Timer]
-      OnBootSec=30s
-      OnUnitActiveSec=2min
-
-      [Install]
-      WantedBy=timers.target
-  - path: /etc/systemd/system/chimera-report-on-shutdown.service
-    content: |
-      [Unit]
-      Description=Tell the Worker what the computer is doing before shutting down
-      Wants=network-online.target
-      After=network-online.target systemd-networkd.service systemd-resolved.service incus.service incus-startup.service
-      RequiresMountsFor=/home
-
-      [Service]
-      Type=oneshot
-      RemainAfterExit=yes
-      ExecStart=/bin/true
-      ExecStop=/usr/local/bin/chimera-agent
-      TimeoutStopSec=2min
-
-      [Install]
-      WantedBy=multi-user.target
-  - path: /usr/local/bin/chimera-idle-check
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      set -eu
-      dir=/run/chimera-idle
-      mkdir -p "$dir"
-      minutes=30
-      if [ -e "$dir/minutes" ]; then minutes=$(cat "$dir/minutes"); fi
-      busy() {
-        [ -e /home/andre/.keep-awake ] \
-          || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
-          || ! flock -n -x /var/lib/chimera-awake/awake.lock true
-      }
-      if [ ! -e "$dir/last-busy" ] || busy; then
-        touch "$dir/last-busy"
-        exit 0
+      if [ -z "$flag" ]; then
+        [ -t 0 ] || die "add --yes to delete $name without a terminal"
+        read -rp "$name isn't backed up. Type its name to delete it: " answer
+        [ "$answer" = "$name" ] || die "not deleted"
       fi
-      if [ $(( $(date +%s) - $(stat -c %Y "$dir/last-busy") )) -ge $(( minutes * 60 )) ]; then
-        echo "chimera: idle for $minutes minutes, powering off"
-        systemctl poweroff
-      fi
-  - path: /usr/local/bin/awake
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      exec flock -o -s /var/lib/chimera-awake/awake.lock "$@"
-  - path: /usr/local/bin/chimera-agent-busy
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      pid=$PPID
-      while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
-        [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = claude ] && break
-        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-      done
-      [ -n "$pid" ] && [ "$pid" -gt 1 ] || exit 0
-      busy=$(python3 -c '
-      import json, sys
-      d = json.load(sys.stdin)
-      event = d.get("hook_event_name")
-      tasks = d.get("background_tasks") or []
-      running = any(t.get("status") == "running" for t in tasks)
-      print(int(event == "UserPromptSubmit" or (event == "Stop" and running) or bool(d.get("session_crons"))))
-      ' 2>/dev/null) || exit 0
-      holder="tail --pid=$pid -f /dev/null"
-      if [ "$busy" = 1 ]; then
-        pgrep -f "$holder" >/dev/null \
-          || setsid -f flock -o -s /var/lib/chimera-awake/awake.lock tail --pid="$pid" -f /dev/null </dev/null >/dev/null 2>&1
+      incus delete -f "$name"
+      echo "deleted $name"
+    }
+
+    cmd_secret() {
+      local value
+      case "${1:-}" in claude|github) ;; *) die "usage: chimera secret claude|github" ;; esac
+      if [ -t 0 ]; then read -rsp "Paste the $1 token: " value; echo; else read -r value; fi
+      [ -n "$value" ] || die "the token is empty"
+      install -d -m 700 "$secrets"
+      (umask 077 && printf '%s\n' "$value" > "$secrets/$1")
+      echo "Saved. Run 'chimera base' so new containers get it."
+    }
+
+    secret_env() {
+      local file=$secrets/$1
+      if [ -s "$file" ]; then
+        echo "export $2=$(printf %q "$(cat "$file")")"
       else
-        pkill -f "$holder" || true
+        echo "chimera: no $1 token yet, so new containers won't have one. Add it with 'chimera secret $1'." >&2
       fi
+    }
+
+    cmd_base() {
+      incus delete -f base-new >/dev/null 2>&1 || true
+      incus launch images:ubuntu/24.04 base-new -c security.nesting=true -c limits.memory=1536MiB >/dev/null
+      ready base-new
+      incus file push "$setup" base-new/root/base-setup.sh
+      incus exec base-new -- bash /root/base-setup.sh </dev/null
+      incus file push --mode 0755 /usr/local/bin/awake /usr/local/bin/chimera-agent-busy base-new/usr/local/bin/
+      incus file push -p /etc/claude-code/managed-settings.json base-new/etc/claude-code/managed-settings.json
+      { secret_env claude CLAUDE_CODE_OAUTH_TOKEN; secret_env github GH_TOKEN; } \
+        | incus exec base-new -- sh -c 'umask 077 && cat > /home/andre/.config/chimera/env && chown andre:andre /home/andre/.config/chimera/env'
+      incus stop base-new
+      incus delete -f base >/dev/null 2>&1 || true
+      incus move base-new base
+      echo "base is ready. New containers start from it."
+    }
+
+    cmd=${1:-}
+    shift || true
+    case "$cmd" in
+      new|fork|ls|results|report|run|shell|rm|secret|base) "cmd_$cmd" "$@" ;;
+      *) die "usage: chimera new|fork|ls|results|report|run|shell|rm|secret|base" ;;
+    esac
+- path: /usr/local/share/chimera/base-setup.sh
+  content: |
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+
+    usermod -l andre -d /home/andre -m ubuntu
+    groupmod -n andre ubuntu
+    sed -i 's/^ubuntu /andre /' /etc/sudoers.d/*
+
+    install -d -m 755 /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+    apt-get update -q
+    apt-get install -yq git tmux curl ca-certificates jq ripgrep build-essential docker.io gh
+    apt-get clean
+    usermod -aG docker andre
+
+    sudo -iu andre bash <<'EOF'
+    set -euo pipefail
+    curl -fsSL https://claude.ai/install.sh | bash
+    [ -e ~/.claude.json ] || echo '{"hasCompletedOnboarding": true}' > ~/.claude.json
+    install -d -m 700 ~/.config/chimera
+    echo '[ -f ~/.config/chimera/env ] && . ~/.config/chimera/env' >> ~/.profile
+    git config --global user.name "Andre Ramos"
+    git config --global user.email ralphandrer04@gmail.com
+    git config --global credential.https://github.com.helper '!gh auth git-credential'
+    EOF
+- path: /usr/local/share/chimera/report.py
+  content: |
+    import json, sys
+
+    def lines(path):
+        try:
+            with open(path) as f:
+                return f.read().splitlines()
+        except OSError:
+            return None
+
+    def meta(container, key):
+        return container["config"].get("user.chimera." + key) or None
+
+    def work(directory, name):
+        rc = lines(f"{directory}/{name}.rc")
+        if rc is None:
+            return None
+        return {
+            "unpushed": lines(f"{directory}/{name}.unpushed") or [],
+            "uncommitted": lines(f"{directory}/{name}.uncommitted") or [],
+            "error": "couldn't reach GitHub" if rc == ["2"] else None,
+        }
+
+    def workspace(directory, container):
+        return {
+            "name": container["name"],
+            "state": container["status"].lower(),
+            "parent": meta(container, "parent"),
+            "task": meta(container, "task"),
+            "repo": meta(container, "repo"),
+            "branch": meta(container, "branch"),
+            "work": work(directory, container["name"]),
+        }
+
+    containers = [c for c in json.load(sys.stdin) if c["name"] != "base"]
+    if sys.argv[1] == "names":
+        print("\n".join(c["name"] for c in containers if c["status"] == "Running" and meta(c, "repo")))
+    else:
+        directory, busy = sys.argv[2], sys.argv[3] == "true"
+        print(json.dumps({"busy": busy, "workspaces": [workspace(directory, c) for c in containers]}))
+- path: /usr/local/bin/chimera-agent
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    set -eu
+    token=/home/.chimera/agent-token
+    if [ ! -s "$token" ]; then
+      echo "chimera-agent: no token yet, skipping report"
       exit 0
-  - path: /etc/claude-code/managed-settings.json
-    content: |
-      {"hooks": {
-        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/usr/local/bin/chimera-agent-busy"}]}],
-        "Stop": [{"hooks": [{"type": "command", "command": "/usr/local/bin/chimera-agent-busy"}]}]
-      }}
-  - path: /etc/profile.d/chimera-tmux.sh
-    content: |
-      if [ -n "${SSH_CONNECTION:-}" ] && [ -z "${TMUX:-}" ] && [ -t 0 ] && command -v tmux >/dev/null; then
-        tmux new-session -A -s main && exit
-      fi
-  - path: /usr/local/bin/chimera-restic
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      set -eu
-      dir=/home/.chimera/backup
-      set -a; . "$dir/env"; set +a
-      export RESTIC_PASSWORD_FILE="$dir/password" RESTIC_CACHE_DIR="$dir/cache"
-      exec restic "$@"
-  - path: /usr/local/bin/chimera-backup
-    permissions: "0755"
-    content: |
-      #!/bin/sh
-      set -eu
-      if [ ! -e /home/.chimera/backup/env ]; then
-        echo "chimera: no backup keys on the volume, skipping backup"
-        exit 0
-      fi
-      exec flock /run/chimera-backup.lock /usr/local/bin/chimera-restic backup /home --host chimera --one-file-system \
-        --exclude /home/.chimera/backup \
-        --exclude /home/.chimera/incus/images \
-        --exclude /home/.chimera/containerd \
-        --exclude '/home/.chimera/docker/*' \
-        --exclude '!/home/.chimera/docker/volumes' \
-        --exclude '/home/*/.cache' \
-        --exclude node_modules
-  - path: /etc/systemd/system/chimera-backup.service
-    content: |
-      [Unit]
-      Description=Back up /home to R2
+    fi
+    umask 077
+    dir=$(mktemp -d)
+    trap 'rm -rf "$dir"' EXIT
+    printf 'Authorization: Bearer %s\n' "$(cat "$token")" > "$dir/header"
+    chimera report > "$dir/report.json"
+    curl -fsS --max-time 60 -H @"$dir/header" -H 'Content-Type: application/json' \
+      --data-binary @"$dir/report.json" https://chimera-control.ralphandrer04.workers.dev/report
+- path: /etc/systemd/system/chimera-report.service
+  content: |
+    [Unit]
+    Description=Tell the Worker what the computer and its containers are doing
+    Wants=network-online.target
+    After=network-online.target incus.service
 
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/local/bin/chimera-backup
-  - path: /etc/systemd/system/chimera-backup.timer
-    content: |
-      [Timer]
-      OnBootSec=1h
-      OnUnitActiveSec=1h
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/chimera-agent
+    TimeoutStartSec=3min
+- path: /etc/systemd/system/chimera-report.timer
+  content: |
+    [Timer]
+    OnBootSec=30s
+    OnUnitActiveSec=2min
 
-      [Install]
-      WantedBy=timers.target
-  - path: /etc/systemd/system/chimera-backup-on-shutdown.service
-    content: |
-      [Unit]
-      Description=Back up /home to R2 before shutting down
-      Wants=network-online.target
-      After=network-online.target systemd-networkd.service systemd-resolved.service
-      RequiresMountsFor=/home
+    [Install]
+    WantedBy=timers.target
+- path: /etc/systemd/system/chimera-report-on-shutdown.service
+  content: |
+    [Unit]
+    Description=Tell the Worker what the computer is doing before shutting down
+    Wants=network-online.target
+    After=network-online.target systemd-networkd.service systemd-resolved.service incus.service incus-startup.service
+    RequiresMountsFor=/home
 
-      [Service]
-      Type=oneshot
-      RemainAfterExit=yes
-      ExecStart=/bin/true
-      ExecStop=/usr/local/bin/chimera-backup
-      TimeoutStopSec=10min
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    ExecStart=/bin/true
+    ExecStop=/usr/local/bin/chimera-agent
+    TimeoutStopSec=2min
 
-      [Install]
-      WantedBy=multi-user.target
-  - path: /etc/systemd/system/chimera-idle.service
-    content: |
-      [Unit]
-      Description=Power off when nobody has been connected for a while
+    [Install]
+    WantedBy=multi-user.target
+- path: /usr/local/bin/chimera-idle-check
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    set -eu
+    dir=/run/chimera-idle
+    mkdir -p "$dir"
+    minutes=30
+    if [ -e "$dir/minutes" ]; then minutes=$(cat "$dir/minutes"); fi
+    busy() {
+      [ -e /home/andre/.keep-awake ] \
+        || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
+        || ! flock -n -x /var/lib/chimera-awake/awake.lock true
+    }
+    if [ ! -e "$dir/last-busy" ] || busy; then
+      touch "$dir/last-busy"
+      exit 0
+    fi
+    if [ $(( $(date +%s) - $(stat -c %Y "$dir/last-busy") )) -ge $(( minutes * 60 )) ]; then
+      echo "chimera: idle for $minutes minutes, powering off"
+      systemctl poweroff
+    fi
+- path: /usr/local/bin/awake
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    exec flock -o -s /var/lib/chimera-awake/awake.lock "$@"
+- path: /usr/local/bin/chimera-agent-busy
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    pid=$PPID
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+      [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = claude ] && break
+      pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    done
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] || exit 0
+    busy=$(python3 -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    event = d.get("hook_event_name")
+    tasks = d.get("background_tasks") or []
+    running = any(t.get("status") == "running" for t in tasks)
+    print(int(event == "UserPromptSubmit" or (event == "Stop" and running) or bool(d.get("session_crons"))))
+    ' 2>/dev/null) || exit 0
+    holder="tail --pid=$pid -f /dev/null"
+    if [ "$busy" = 1 ]; then
+      pgrep -f "$holder" >/dev/null \
+        || setsid -f flock -o -s /var/lib/chimera-awake/awake.lock tail --pid="$pid" -f /dev/null </dev/null >/dev/null 2>&1
+    else
+      pkill -f "$holder" || true
+    fi
+    exit 0
+- path: /etc/claude-code/managed-settings.json
+  content: |
+    {"hooks": {
+      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/usr/local/bin/chimera-agent-busy"}]}],
+      "Stop": [{"hooks": [{"type": "command", "command": "/usr/local/bin/chimera-agent-busy"}]}]
+    }}
+- path: /etc/profile.d/chimera-tmux.sh
+  content: |
+    if [ -n "${SSH_CONNECTION:-}" ] && [ -z "${TMUX:-}" ] && [ -t 0 ] && command -v tmux >/dev/null; then
+      tmux new-session -A -s main && exit
+    fi
+- path: /usr/local/bin/chimera-restic
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    set -eu
+    dir=/home/.chimera/backup
+    set -a; . "$dir/env"; set +a
+    export RESTIC_PASSWORD_FILE="$dir/password" RESTIC_CACHE_DIR="$dir/cache"
+    exec restic "$@"
+- path: /usr/local/bin/chimera-backup
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    set -eu
+    if [ ! -e /home/.chimera/backup/env ]; then
+      echo "chimera: no backup keys on the volume, skipping backup"
+      exit 0
+    fi
+    exec flock /run/chimera-backup.lock /usr/local/bin/chimera-restic backup /home --host chimera --one-file-system \
+      --exclude /home/.chimera/backup \
+      --exclude /home/.chimera/incus/images \
+      --exclude /home/.chimera/containerd \
+      --exclude '/home/.chimera/docker/*' \
+      --exclude '!/home/.chimera/docker/volumes' \
+      --exclude '/home/*/.cache' \
+      --exclude node_modules
+- path: /etc/systemd/system/chimera-backup.service
+  content: |
+    [Unit]
+    Description=Back up /home to R2
 
-      [Service]
-      Type=oneshot
-      ExecStart=/usr/local/bin/chimera-idle-check
-  - path: /etc/systemd/system/chimera-idle.timer
-    content: |
-      [Timer]
-      OnBootSec=1min
-      OnUnitActiveSec=1min
-      AccuracySec=10s
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/chimera-backup
+- path: /etc/systemd/system/chimera-backup.timer
+  content: |
+    [Timer]
+    OnBootSec=1h
+    OnUnitActiveSec=1h
 
-      [Install]
-      WantedBy=timers.target
-  - path: /etc/systemd/logind.conf.d/60-chimera.conf
-    content: |
-      [Login]
-      PowerKeyIgnoreInhibited=yes
-  - path: /etc/ssh/sshd_config.d/60-chimera.conf
-    content: |
-      ClientAliveInterval 60
-      ClientAliveCountMax 3
+    [Install]
+    WantedBy=timers.target
+- path: /etc/systemd/system/chimera-backup-on-shutdown.service
+  content: |
+    [Unit]
+    Description=Back up /home to R2 before shutting down
+    Wants=network-online.target
+    After=network-online.target systemd-networkd.service systemd-resolved.service
+    RequiresMountsFor=/home
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    ExecStart=/bin/true
+    ExecStop=/usr/local/bin/chimera-backup
+    TimeoutStopSec=10min
+
+    [Install]
+    WantedBy=multi-user.target
+- path: /etc/systemd/system/chimera-idle.service
+  content: |
+    [Unit]
+    Description=Power off when nobody has been connected for a while
+
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/chimera-idle-check
+- path: /etc/systemd/system/chimera-idle.timer
+  content: |
+    [Timer]
+    OnBootSec=1min
+    OnUnitActiveSec=1min
+    AccuracySec=10s
+
+    [Install]
+    WantedBy=timers.target
+- path: /etc/systemd/logind.conf.d/60-chimera.conf
+  content: |
+    [Login]
+    PowerKeyIgnoreInhibited=yes
+- path: /etc/ssh/sshd_config.d/60-chimera.conf
+  content: |
+    ClientAliveInterval 60
+    ClientAliveCountMax 3
 
 runcmd:
-  - |
-    keys=/home/.chimera/ssh-host-keys
-    if [ ! -d "$keys" ]; then
-      install -d -m 700 "$keys"
-      cp -p /etc/ssh/ssh_host_* "$keys"/
+- |
+  keys=/home/.chimera/ssh-host-keys
+  if [ ! -d "$keys" ]; then
+    install -d -m 700 "$keys"
+    cp -p /etc/ssh/ssh_host_* "$keys"/
+  fi
+- install -d /run/chimera-idle /var/lib/chimera-awake && touch /var/lib/chimera-awake/awake.lock
+- systemctl daemon-reload
+- systemctl reload systemd-logind
+- systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
+- systemctl enable --now chimera-firewall.service
+- systemctl start incus.socket incus-user.socket incus-startup.service
+- |
+  incus admin waitready --timeout 60
+  if ! incus storage show default >/dev/null 2>&1; then
+    disk=$(cat /run/chimera/machines-disk)
+    rc=0; blkid -p "$disk" >/dev/null || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      incus admin init --preseed <<EOF
+  storage_pools:
+  - name: default
+    driver: btrfs
+    config:
+      source: $disk
+  networks:
+  - name: incusbr0
+    type: bridge
+    config:
+      ipv4.address: 10.171.245.1/24
+      dns.domain: ws
+      ipv6.address: none
+  profiles:
+  - name: default
+    devices:
+      root: {path: /, pool: default, type: disk}
+      eth0: {name: eth0, network: incusbr0, type: nic}
+  EOF
+    else
+      echo "chimera: Incus has no storage but $disk isn't blank, leaving it alone (see 'incus admin recover')" >&2
     fi
-  - install -d /run/chimera-idle /var/lib/chimera-awake && touch /var/lib/chimera-awake/awake.lock
-  - systemctl daemon-reload
-  - systemctl reload systemd-logind
-  - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
-  - systemctl enable --now chimera-firewall.service
-  - systemctl start incus.socket incus-user.socket incus-startup.service
-  - |
-    incus admin waitready --timeout 60
-    if ! incus storage show default >/dev/null 2>&1; then
-      disk=$(cat /run/chimera/machines-disk)
-      rc=0; blkid -p "$disk" >/dev/null || rc=$?
-      if [ "$rc" -eq 2 ]; then
-        incus admin init --preseed <<EOF
-    storage_pools:
-    - name: default
-      driver: btrfs
-      config:
-        source: $disk
-    networks:
-    - name: incusbr0
-      type: bridge
-      config:
-        ipv4.address: 10.171.245.1/24
-        dns.domain: ws
-        ipv6.address: none
-    profiles:
-    - name: default
-      devices:
-        root: {path: /, pool: default, type: disk}
-        eth0: {name: eth0, network: incusbr0, type: nic}
-    EOF
-      else
-        echo "chimera: Incus has no storage but $disk isn't blank, leaving it alone (see 'incus admin recover')" >&2
-      fi
-    fi
-    [ "$(incus network get incusbr0 dns.domain)" = ws ] || incus network set incusbr0 dns.domain=ws
-    incus profile device get default awake source >/dev/null 2>&1 \
-      || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
-  - systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service
-  - tailscale set --advertise-routes=10.171.245.0/24
-  - systemctl try-reload-or-restart ssh
+  fi
+  [ "$(incus network get incusbr0 dns.domain)" = ws ] || incus network set incusbr0 dns.domain=ws
+  incus profile device get default awake source >/dev/null 2>&1 \
+    || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
+- systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service
+- tailscale set --advertise-routes=10.171.245.0/24
+- systemctl try-reload-or-restart ssh
