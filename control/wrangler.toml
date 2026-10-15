@@ -13,7 +13,7 @@ enabled = true
 
 [[rules]]
 type = "Text"
-globs = ["**/*.yaml"]
+globs = ["**/*.yaml", "**/*.html"]
 fallthrough = false
 
 [[durable_objects.bindings]]

@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Chimera">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Chimera</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f6f4ef; --card: #fff; --ink: #1d1c1a; --dim: #6d6a63; --line: #dcd8ce;
+  --accent: #2f5d50; --on-accent: #fff; --bad: #b3261e; --warn: #8a5a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151513; --card: #20201d; --ink: #ece9e2; --dim: #9a968c; --line: #35342f; --accent: #7fb5a3; --on-accent: #10201a; --bad: #ff8a80; --warn: #e0b45a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 16px 14px calc(32px + env(safe-area-inset-bottom)); }
+h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 28px 2px 8px; font-weight: 600; }
+section, .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 10px; }
+.big { font-size: 34px; font-weight: 650; margin: 0; }
+.dim { color: var(--dim); font-size: 14px; }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+button, input, textarea { font: inherit; color: inherit; }
+button { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .5; }
+input, textarea { width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+textarea { min-height: 96px; resize: vertical; }
+label { display: block; font-size: 14px; color: var(--dim); margin: 12px 0 4px; }
+.name { font-weight: 650; font-size: 19px; overflow-wrap: anywhere; }
+.badge { font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--accent); color: var(--accent); }
+.task { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+a { color: var(--accent); overflow-wrap: anywhere; }
+pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.link { background: none; border: 0; min-height: 44px; padding: 0; color: var(--dim); font-size: 14px; text-decoration: underline; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="login" hidden>
+    <p class="big" style="font-size:26px">Chimera</p>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" enterkeyhint="go">
+    <p id="loginNote" class="bad" role="alert"></p>
+    <button id="loginGo" class="primary">Enter</button>
+  </section>
+
+  <div id="app" hidden>
+    <h2>Computer</h2>
+    <section id="computer"></section>
+    <p id="notice" class="dim" role="status"></p>
+
+    <h2>Containers</h2>
+    <div id="containers"></div>
+
+    <h2>New task</h2>
+    <section>
+      <form id="newTask" autocomplete="off">
+        <label for="repo">Repo (OWNER/REPO)</label>
+        <input id="repo" required pattern="[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <label for="cname">Name</label>
+        <input id="cname" required pattern="(?!base$)[a-z][a-z0-9\-]{0,62}" autocapitalize="none" autocorrect="off" spellcheck="false" title="Lowercase letters, digits and dashes. Starts with a letter. Not &quot;base&quot;.">
+        <label for="task">Task</label>
+        <textarea id="task" maxlength="2000" required></textarea>
+        <div class="actions"><button class="primary" type="submit">Start</button></div>
+        <p id="formNote" class="bad" role="alert"></p>
+      </form>
+    </section>
+    <button id="forget" class="link">Forget password</button>
+  </div>
+</main>
+<script>
+const keys = { password: "chimera.password", repo: "chimera.repo" };
+const pollMs = 10000;
+const taskPreview = 140;
+
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+  clear(key) { try { localStorage.removeItem(key); } catch {} },
+};
+
+const $ = (id) => document.getElementById(id);
+const h = (tag, props = {}, ...kids) => {
+  const el = Object.assign(document.createElement(tag), props);
+  el.append(...kids.flat().filter((kid) => kid != null && kid !== false));
+  return el;
+};
+
+const progressWord = {
+  running: (w) => (w.state === null ? "creating…" : "starting…"),
+  stopped: () => "stopping…",
+  gone: () => "deleting…",
+};
+const containerButtons = {
+  running: ["stop", "rm"],
+  stopped: ["start", "rm"],
+};
+const buttonLabel = { start: "Start", stop: "Stop", rm: "Delete" };
+const computerButtons = { asleep: ["wake"], awake: ["sleep"] };
+
+const isPending = (w) => w.rev !== null && w.rev !== w.doneRev;
+const lostWork = (w) => (w.work ? [...w.work.unpushed, ...w.work.uncommitted] : []);
+
+function statusLabel(w) {
+  if (isPending(w) && !w.error) return h("span", { className: "dim" }, progressWord[w.want]?.(w) ?? w.state);
+  if (w.error) return h("span", { className: "bad" }, w.error);
+  return h("span", { className: "dim" }, w.state ?? "");
+}
+
+function age(seconds) {
+  if (seconds === null || seconds === undefined) return "no report yet";
+  if (seconds < 90) return `${seconds}s ago`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} min ago`;
+  return `${Math.round(seconds / 3600)} h ago`;
+}
+
+const ui = { expanded: new Set(), deleting: null, handlers: {} };
+
+function workLine(w) {
+  if (!w.work) return null;
+  const { unpushed, uncommitted, error } = w.work;
+  const parts = [
+    unpushed.length > 0 && `${unpushed.length} unpushed commit${unpushed.length === 1 ? "" : "s"}`,
+    uncommitted.length > 0 && `${uncommitted.length} uncommitted file${uncommitted.length === 1 ? "" : "s"}`,
+  ].filter(Boolean);
+  if (parts.length === 0 && !error) return null;
+  return h("p", { className: "warn" }, parts.join(", "), error && h("span", { className: "dim" }, `${parts.length ? " · " : ""}couldn't check everything`));
+}
+
+function taskBlock(w) {
+  if (!w.task) return null;
+  const long = w.task.length > taskPreview;
+  const open = ui.expanded.has(w.name);
+  const shown = long && !open ? `${w.task.slice(0, taskPreview)}…` : w.task;
+  return h("p", {
+    className: "task",
+    onclick: () => { ui.expanded.has(w.name) ? ui.expanded.delete(w.name) : ui.expanded.add(w.name); ui.handlers.redraw(); },
+  }, shown);
+}
+
+function deleteConfirm(w) {
+  const lost = lostWork(w);
+  return h("div", {},
+    lost.length > 0
+      ? [h("p", { className: "bad" }, "Deleting this loses work that isn't pushed:"), h("pre", {}, lost.join("\n"))]
+      : h("p", {}, `Delete ${w.name}?`),
+    h("div", { className: "actions" },
+      h("button", { className: "danger", onclick: () => ui.handlers.remove(w, lost.length > 0) }, lost.length > 0 ? "Delete and lose it" : "Delete"),
+      h("button", { onclick: () => { ui.deleting = null; ui.handlers.redraw(); } }, "Keep")));
+}
+
+function card(w) {
+  const buttons = isPending(w) && !w.error ? [] : containerButtons[w.state] ?? [];
+  const link = w.repo && w.branch && h("a", { href: `https://github.com/${w.repo}/tree/${w.branch}`, target: "_blank", rel: "noopener" }, `${w.repo} @ ${w.branch}`);
+  return h("div", { className: "card" },
+    h("div", { className: "row" }, h("span", { className: "name" }, w.name), w.agent && h("span", { className: "badge" }, w.agent)),
+    h("div", {}, statusLabel(w)),
+    taskBlock(w),
+    link && h("p", { className: "dim" }, link),
+    workLine(w),
+    ui.deleting === w.name
+      ? deleteConfirm(w)
+      : h("div", { className: "actions" }, buttons.map((action) =>
+          h("button", { className: action === "rm" ? "danger" : "", onclick: () => ui.handlers.act(action, w) }, buttonLabel[action]))));
+}
+
+function computerCard(s) {
+  const buttons = computerButtons[s.state] ?? [];
+  return [
+    h("p", { className: "big" }, s.state ?? "unknown"),
+    s.busy && h("p", { className: "warn" }, "Claude is working"),
+    h("p", { className: "dim" }, `Last report ${age(s.reportAgeSeconds)}`),
+    h("div", { className: "actions" }, buttons.map((action) =>
+      h("button", { className: action === "wake" ? "primary" : "", onclick: () => ui.handlers[action](s) }, action === "wake" ? "Wake" : "Sleep"))),
+  ];
+}
+
+function render(s) {
+  return {
+    computer: computerCard(s),
+    containers: s.workspaces.length > 0
+      ? s.workspaces.map(card)
+      : [h("p", { className: "dim" }, "No containers.")],
+  };
+}
+
+const show = (id, kids) => $(id).replaceChildren(...kids);
+let last = null;
+function draw() {
+  if (!last) return;
+  const view = render(last);
+  show("computer", view.computer);
+  show("containers", view.containers);
+}
+ui.handlers.redraw = draw;
+
+let timer = null;
+const note = (text, bad = false) => { $("notice").textContent = text; $("notice").className = bad ? "bad" : "dim"; };
+
+function showLogin(message = "") {
+  store.clear(keys.password);
+  clearInterval(timer);
+  timer = null;
+  last = null;
+  $("app").hidden = true;
+  $("login").hidden = false;
+  $("loginNote").textContent = message;
+  $("password").value = "";
+}
+
+async function api(method, path, body, type = "application/json") {
+  const password = store.get(keys.password);
+  const headers = { Authorization: `Bearer ${password}` };
+  if (body !== undefined) headers["Content-Type"] = type;
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body === undefined ? undefined : type === "application/json" ? JSON.stringify(body) : body });
+  } catch {
+    throw new Error("Can't reach the server.");
+  }
+  if (res.status === 401) {
+    showLogin("Wrong password.");
+    throw new Error("Wrong password.");
+  }
+  const reply = await res.text();
+  if (!res.ok) throw new Error(reply || `Error ${res.status}`);
+  return reply;
+}
+
+async function refresh() {
+  try {
+    last = JSON.parse(await api("GET", "/state"));
+    draw();
+    if ($("notice").className === "bad") note("");
+  } catch (error) {
+    if (!$("app").hidden) note(error.message, true);
+  }
+}
+
+async function act(label, request) {
+  try {
+    note(label);
+    const reply = await request();
+    note(reply || "");
+  } catch (error) {
+    note(error.message, true);
+  }
+  await refresh();
+}
+
+const sendOrder = (order) => api("POST", "/orders", order).then(() => "");
+
+Object.assign(ui.handlers, {
+  wake: () => act("Waking…", () => api("POST", "/wake")),
+  sleep: (s) => {
+    if (s.busy && !confirm("Claude is still working. Sleep anyway?")) return;
+    return act("Going to sleep…", () => api("POST", "/want", "asleep", "text/plain").then(() => ""));
+  },
+  act(action, w) {
+    if (action === "rm") { ui.deleting = w.name; return draw(); }
+    return act("", () => sendOrder({ action, name: w.name }));
+  },
+  remove(w, force) {
+    ui.deleting = null;
+    return act("", () => sendOrder({ action: "rm", name: w.name, ...(force && { force: true }) }));
+  },
+});
+
+$("newTask").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const order = { action: "new", name: $("cname").value.trim(), repo: $("repo").value.trim(), task: $("task").value };
+  $("formNote").textContent = "";
+  try {
+    await sendOrder(order);
+    store.set(keys.repo, order.repo);
+    $("cname").value = "";
+    $("task").value = "";
+    await refresh();
+  } catch (error) {
+    $("formNote").textContent = error.message;
+  }
+});
+
+function start() {
+  $("login").hidden = true;
+  $("app").hidden = false;
+  $("repo").value ||= store.get(keys.repo) ?? "";
+  refresh();
+  clearInterval(timer);
+  timer = setInterval(refresh, pollMs);
+}
+
+function enter() {
+  const password = $("password").value;
+  if (!password) return;
+  store.set(keys.password, password);
+  start();
+}
+
+$("loginGo").addEventListener("click", enter);
+$("password").addEventListener("keydown", (event) => { if (event.key === "Enter") enter(); });
+$("forget").addEventListener("click", () => showLogin());
+document.addEventListener("visibilitychange", () => {
+  if ($("app").hidden) return;
+  if (document.hidden) { clearInterval(timer); timer = null; } else { refresh(); timer = setInterval(refresh, pollMs); }
+});
+
+store.get(keys.password) ? start() : showLogin();
+</script>
+</body>
+</html>

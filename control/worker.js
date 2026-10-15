@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import cloudInit from "../cloud-init.yaml";
 import imageInit from "../image.yaml";
+import dashboardPage from "./dashboard.html";
 
 const name = "chimera";
 const api = "https://api.hetzner.cloud/v1";
@@ -459,7 +460,12 @@ async function state(request, env) {
   return json(buildState(servers[0] ?? null, await records(env).read(), Date.now()));
 }
 
+async function dashboard() {
+  return new Response(dashboardPage, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+
 const routes = {
+  "GET /": [[], dashboard],
   "POST /wake": [["WAKE_TOKEN"], wake],
   "POST /want": [["WAKE_TOKEN"], want],
   "GET /state": [["WAKE_TOKEN", "AGENT_TOKEN"], state],
@@ -493,7 +499,7 @@ export default {
     const route = routes[`${request.method} ${new URL(request.url).pathname}`];
     if (!route) return text("Not found.", 404);
     const [tokenNames, handle] = route;
-    if (!tokenNames.some((tokenName) => authorized(request, env[tokenName]))) return text("Wrong password.", 401);
+    if (tokenNames.length > 0 && !tokenNames.some((tokenName) => authorized(request, env[tokenName]))) return text("Wrong password.", 401);
     return handle(request, env);
   },
 };

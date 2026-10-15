@@ -16,7 +16,7 @@ export async function load(url, context, nextLoad) {
     const source = "export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }";
     return { format: "module", shortCircuit: true, source };
   }
-  if (!url.endsWith(".yaml")) return nextLoad(url, context);
+  if (!url.endsWith(".yaml") && !url.endsWith(".html")) return nextLoad(url, context);
   const text = fs.readFileSync(fileURLToPath(url), "utf8");
   return { format: "module", shortCircuit: true, source: "export default " + JSON.stringify(text) };
 }
@@ -397,7 +397,22 @@ for (const [method, path, tokenVars] of [
 }
 
 storage.clear();
-let res = await sendReport([workspace("a", { work: { unpushed: ["abc1234 add"], uncommitted: [" M a.js"], error: null } })], true);
+calls.length = 0;
+const secrets = { WAKE_TOKEN: "wake-secret-7q", AGENT_TOKEN: "agent-secret-7q", HCLOUD_TOKEN: "hcloud-secret-7q" };
+let res = await call("GET", "/", { token: null, env: secrets });
+assert.equal(res.status, 200);
+assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
+const page = await res.text();
+assert.match(page, /^<!doctype html>/i);
+for (const secret of Object.values(secrets)) assert.ok(!page.includes(secret));
+assert.equal(calls.length, 0);
+for (const [method, path] of [["POST", "/"], ["GET", "/nope"], ["GET", "/index.html"]]) {
+  assert.equal((await call(method, path, { token: null })).status, 404, `${method} ${path}`);
+}
+console.log("PASS: GET / serves the page without a token and holds no secrets, other unknown routes still 404");
+
+storage.clear();
+res = await sendReport([workspace("a", { work: { unpushed: ["abc1234 add"], uncommitted: [" M a.js"], error: null } })], true);
 assert.equal(res.status, 204);
 assert.equal(storage.get("computer").busy, true);
 assert.ok(nearNow(storage.get("computer").reportedAt));
