@@ -198,7 +198,8 @@ cmd_sleep() {
   want asleep
   status=$(server_status)
   if [ "$status" = running ]; then
-    hcloud server shutdown "$name"
+    # The Worker usually sent this shutdown already when it got "want asleep", and Hetzner locks the server meanwhile.
+    hcloud server shutdown "$name" >/dev/null 2>&1 || true
     echo "Backing up before sleep..."
   fi
   for _ in $(seq 360); do
