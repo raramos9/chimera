@@ -196,7 +196,7 @@ function render(s) {
   };
 }
 
-const show = (id, kids) => $(id).replaceChildren(...kids);
+const show = (id, kids) => $(id).replaceChildren(h("div", {}, kids));
 let last = null;
 function draw() {
   if (!last) return;
