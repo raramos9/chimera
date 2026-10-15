@@ -91,7 +91,7 @@ Add a task to a container with a repo, and Claude starts on it by itself:
 chimera new fix-login "Make the login page reject empty passwords." --repo OWNER/REPO
 ```
 
-Claude opens in a tmux window called `claude`, in the repo folder, with the task as its first message. It approves its own actions inside the container and is told to commit and push `chimera/NAME` when it's done. To watch it or type to it, run `chimera shell NAME` and switch to the `claude` window (Ctrl-b then `w`). A fork given a task starts Claude the same way on its own branch.
+Claude opens in a tmux window called `claude`, in the repo folder, with the task as its first message. It approves its own actions inside the container and is told to commit and push `chimera/NAME` when it's done. To watch it or type to it, run `chimera shell NAME` and switch to the `claude` window (Ctrl-b then `w`), or use "Watch Claude" on the dashboard. A fork given a task starts Claude the same way on its own branch.
 
 `chimera ls` has an `AGENT` column. `working` means Claude is busy, `waiting` means it's done or wants an answer, and `-` means no Claude is running. While it works it keeps the computer awake. Once it's waiting, the computer sleeps after 30 idle minutes, which ends the session. Anything Claude pushed is safe on GitHub.
 
@@ -158,6 +158,14 @@ Until both are done, the computer skips its reports and `status` says `No report
 Open the Worker's address (https://chimera-control.ralphandrer04.workers.dev) in any browser. The first visit asks for the wake password, the same one the phone Shortcut sends, and that browser remembers it. On the iPhone, Share > Add to Home Screen makes it an app icon.
 
 The page shows the same information as `status` and `ls` and refreshes every 10 seconds. It can wake the computer, put it to sleep, start a new task, and start, stop or delete containers. Delete lists any work that isn't on GitHub and asks before throwing it away. Sleep asks first if Claude is working. Sleep is a gentle shutdown, so the computer backs itself up before it powers off.
+
+### Watching Claude from a browser
+
+While the computer is awake, a running container with a task shows a "Watch Claude" button on the dashboard. It opens `https://chimera.tailed8053.ts.net:8443/?arg=NAME`, a terminal on the container's `claude` window, the same one `chimera shell NAME` shows. You can type to Claude there too.
+
+Only devices on your tailnet can open it. There is no password, because getting onto the tailnet is the lock. Containers can't open it, and other websites can't type into it. tmux sizes the window to whichever screen used it last, so opening it on the phone narrows it on the laptop until you press a key there.
+
+The page stops working when the computer sleeps, and opening it doesn't wake the computer. `test/watch.sh` checks all of this.
 
 ## Software updates
 

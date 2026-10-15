@@ -30,7 +30,8 @@ section, .card { background: var(--card); border: 1px solid var(--line); border-
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 button, input, textarea { font: inherit; color: inherit; }
-button { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
+button, a.button { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
+a.button { display: inline-flex; align-items: center; color: var(--ink); text-decoration: none; }
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 button.danger { color: var(--bad); }
 button:disabled { opacity: .5; }
@@ -84,6 +85,7 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 8px; 
 const keys = { password: "chimera.password", repo: "chimera.repo" };
 const pollMs = 10000;
 const taskPreview = 140;
+const watchUrl = (name) => `https://chimera.tailed8053.ts.net:8443/?arg=${encodeURIComponent(name)}`;
 
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -161,7 +163,9 @@ function deleteConfirm(w) {
       h("button", { onclick: () => { ui.deleting = null; ui.handlers.redraw(); } }, "Keep")));
 }
 
-function card(w) {
+function card(w, s) {
+  const watch = s.state === "awake" && w.state === "running" && w.task
+    && h("a", { className: "button", href: watchUrl(w.name), target: "_blank", rel: "noopener" }, "Watch Claude");
   const buttons = isPending(w) && !w.error ? [] : containerButtons[w.state] ?? [];
   const link = w.repo && w.branch && h("a", { href: `https://github.com/${w.repo}/tree/${w.branch}`, target: "_blank", rel: "noopener" }, `${w.repo} @ ${w.branch}`);
   return h("div", { className: "card" },
@@ -172,7 +176,7 @@ function card(w) {
     workLine(w),
     ui.deleting === w.name
       ? deleteConfirm(w)
-      : h("div", { className: "actions" }, buttons.map((action) =>
+      : h("div", { className: "actions" }, watch, buttons.map((action) =>
           h("button", { className: action === "rm" ? "danger" : "", onclick: () => ui.handlers.act(action, w) }, buttonLabel[action]))));
 }
 
@@ -191,7 +195,7 @@ function render(s) {
   return {
     computer: computerCard(s),
     containers: s.workspaces.length > 0
-      ? s.workspaces.map(card)
+      ? s.workspaces.map((w) => card(w, s))
       : [h("p", { className: "dim" }, "No containers.")],
   };
 }

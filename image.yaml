@@ -2,7 +2,7 @@
 
 package_update: true
 package_upgrade: true
-packages: [restic, python3-websockets]
+packages: [restic, python3-websockets, ttyd]
 
 runcmd:
   - curl -fsSL https://tailscale.com/install.sh | sh
@@ -20,13 +20,14 @@ runcmd:
     EOF
   - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y incus
   # Powers off only if everything installed. The Worker saves a powered-off build server as the new image.
+  # Ubuntu enables a read-only ttyd login page on port 7681; chimera-watch.service uses that port instead.
   # Incus stays off until cloud-init has put /var/lib/incus on the volume, or its socket lands on the boot disk.
   - |
     systemd-run --unit chimera-seal sh -c '
       cloud-init status --wait >/dev/null \
-        && command -v restic && python3 -c "import websockets" && command -v tailscale && command -v docker && command -v incus \
+        && command -v restic && python3 -c "import websockets" && command -v tailscale && command -v docker && command -v incus && command -v ttyd \
         && systemctl stop tailscaled docker docker.socket containerd \
-        && systemctl disable --now incus-startup.service incus.service incus.socket incus-user.service incus-user.socket \
+        && systemctl disable --now incus-startup.service incus.service incus.socket incus-user.service incus-user.socket ttyd.service \
         && rm -rf /var/lib/tailscale/* /var/lib/docker/* /var/lib/containerd/* /var/lib/incus/* /etc/ssh/ssh_host_* \
         && cloud-init clean --logs --machine-id \
         && sync && systemctl poweroff'

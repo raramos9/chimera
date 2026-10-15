@@ -692,6 +692,30 @@ write_files:
 
     [Install]
     WantedBy=multi-user.target
+- path: /usr/local/bin/chimera-watch
+  permissions: "0755"
+  content: |
+    #!/bin/bash
+    name=${1-}
+    if ! [[ $name =~ ^[a-z][a-z0-9-]{0,62}$ && $name != base ]] || ! incus list -c n -f csv | grep -qx "$name"; then
+      echo "No such container: $name"; sleep 5; exit 1
+    fi
+    incus exec "$name" -- sudo -iu andre tmux attach -t main:claude || { echo "Claude isn't running in $name."; sleep 5; }
+- path: /etc/systemd/system/chimera-watch.service
+  content: |
+    [Unit]
+    Description=Watch Claude in a container from a browser, through tailscale serve on port 8443
+    ConditionPathExists=/usr/bin/ttyd
+    After=incus.service
+
+    [Service]
+    User=andre
+    ExecStart=/usr/bin/ttyd -i lo -p 7681 --writable --url-arg --check-origin /usr/local/bin/chimera-watch
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
 - path: /usr/local/bin/chimera-idle-check
   permissions: "0755"
   content: |
@@ -889,6 +913,7 @@ runcmd:
   [ "$(incus network get incusbr0 dns.domain)" = ws ] || incus network set incusbr0 dns.domain=ws
   incus profile device get default awake source >/dev/null 2>&1 \
     || incus profile device add default awake disk source=/var/lib/chimera-awake path=/var/lib/chimera-awake readonly=true
-- systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service chimera-listen.service
+- systemctl enable --now chimera-report.timer chimera-report-on-shutdown.service chimera-listen.service chimera-watch.service
 - tailscale set --advertise-routes=10.171.245.0/24
+- tailscale serve --bg --https=8443 http://127.0.0.1:7681
 - systemctl try-reload-or-restart ssh
