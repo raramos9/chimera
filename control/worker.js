@@ -194,7 +194,8 @@ const validWork = (work) =>
   work === null || Boolean(work && isLines(work.unpushed) && isLines(work.uncommitted) && isTextOrNull(work.error));
 const validWorkspace = (w) =>
   Boolean(w && isText(w.name) && w.name !== "" && isText(w.state)
-    && ["parent", "task", "repo", "branch"].every((key) => isTextOrNull(w[key])) && validWork(w.work));
+    && ["parent", "task", "repo", "branch"].every((key) => isTextOrNull(w[key])) && validWork(w.work)
+    && [undefined, null, "working", "waiting"].includes(w.agent));
 const isRev = (value) => Number.isInteger(value) && value >= 0;
 const validOutcome = (o) => Boolean(o && isText(o.name) && isRev(o.rev) && isTextOrNull(o.error));
 const validReport = (body) =>
@@ -277,7 +278,7 @@ function withOrders(workspaces, orders, results) {
   return [
     ...workspaces.map((w) => ({ ...w, ...progress(orders[w.name], results[w.name]) })),
     ...Object.values(orders).filter((o) => !reported.has(o.name)).map((o) => ({
-      name: o.name, state: null, parent: o.from, task: o.task, repo: o.repo, branch: null, work: null,
+      name: o.name, state: null, parent: o.from, task: o.task, repo: o.repo, branch: null, work: null, agent: null,
       ...progress(o, results[o.name]),
     })),
   ];

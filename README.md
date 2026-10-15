@@ -83,6 +83,28 @@ Add `--repo OWNER/REPO` to `chimera new` to give a container a real project. The
 
 `chimera rm` checks the same things first, on the computer. If the container has uncommitted files or commits that aren't on GitHub, it lists them and refuses to delete. If it can't reach GitHub to check, it refuses too. Push the work, or add `--force` to delete anyway. `--force` skips the check and the question. `--yes` skips only the question. Containers without a repo are deleted as before.
 
+### Giving a container a task
+
+Add a task to a container with a repo, and Claude starts on it by itself:
+
+```
+chimera new fix-login "Make the login page reject empty passwords." --repo OWNER/REPO
+```
+
+Claude opens in a tmux window called `claude`, in the repo folder, with the task as its first message. It approves its own actions inside the container and is told to commit and push `chimera/NAME` when it's done. To watch it or type to it, run `chimera shell NAME` and switch to the `claude` window (Ctrl-b then `w`). A fork given a task starts Claude the same way on its own branch.
+
+`chimera ls` has an `AGENT` column. `working` means Claude is busy, `waiting` means it's done or wants an answer, and `-` means no Claude is running. While it works it keeps the computer awake. Once it's waiting, the computer sleeps after 30 idle minutes, which ends the session. Anything Claude pushed is safe on GitHub.
+
+From the phone, a Shortcut called "New task" does the same:
+
+1. Ask for Input, "Repo (OWNER/REPO)".
+2. Ask for Input, "Short name (lowercase, dashes)".
+3. Ask for Input, "Task".
+4. Get Contents of URL, the wake URL with `/orders` on the end. Method POST. Header `Authorization` set to `Bearer ` followed by the wake password. Request body JSON with `action` set to `new`, plus `name`, `task` and `repo` from the three answers.
+5. Show Result.
+
+It wakes the computer if needed. A reply with a `rev` number means the order was taken. Check on it later with `chimera ls` or `chimera results NAME`.
+
 ### Giving containers your Claude and GitHub logins
 
 Both logins go into `base`, so every container made after that has them.

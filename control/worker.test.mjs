@@ -436,6 +436,7 @@ for (const body of [
   JSON.stringify({ busy: true, workspaces: [workspace("a", { task: 5 })] }),
   JSON.stringify({ busy: true, workspaces: [workspace("a", { work: { unpushed: "x", uncommitted: [], error: null } })] }),
   JSON.stringify({ busy: true, workspaces: [workspace("a", { work: undefined })] }),
+  JSON.stringify({ busy: true, workspaces: [workspace("a", { agent: "sleeping" })] }),
 ]) {
   res = await call("POST", "/report", { token: "agent", body });
   assert.equal(res.status, 400, body);
@@ -443,6 +444,14 @@ for (const body of [
 }
 assert.equal(storage.size, 0);
 console.log("PASS: a malformed report is refused and stores nothing");
+
+for (const agent of [undefined, null, "working", "waiting"]) {
+  storage.clear();
+  res = await call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, workspaces: [workspace("a", { agent })] }) });
+  assert.equal(res.status, 204, String(agent));
+}
+storage.clear();
+console.log("PASS: a report may say whether each agent is working or waiting");
 
 const getState = async (servers) => {
   list = () => new Response(JSON.stringify({ servers }));
@@ -755,7 +764,7 @@ assert.deepEqual([rows.made.state, rows.made.want, rows.made.rev, rows.made.done
 assert.equal(rows.made.branch, "chimera/made");
 assert.deepEqual([rows.hand.want, rows.hand.rev, rows.hand.doneRev, rows.hand.error], [null, null, null, null]);
 assert.deepEqual(rows.pending, {
-  name: "pending", state: null, parent: "base", task: "t", repo: "o/r", branch: null, work: null,
+  name: "pending", state: null, parent: "base", task: "t", repo: "o/r", branch: null, work: null, agent: null,
   want: "running", rev: 6, doneRev: null, error: null,
 });
 assert.deepEqual([rows.failed.parent, rows.failed.doneRev, rows.failed.error], ["made", 5, "boom"]);

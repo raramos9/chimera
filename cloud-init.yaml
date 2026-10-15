@@ -168,6 +168,7 @@ write_files:
         fi
         incus config set "$name" user.chimera.repo="$repo"
         incus config set "$name" user.chimera.branch="chimera/$name"
+        [ -z "$task" ] || start_agent "$name" "$task"
       fi
     }
 
@@ -179,6 +180,7 @@ write_files:
           die "couldn't make branch chimera/$2, so $2 was deleted"
         fi
         incus config set "$2" user.chimera.branch="chimera/$2"
+        [ -z "$3" ] || start_agent "$2" "$3"
       fi
     }
 
@@ -199,6 +201,8 @@ write_files:
         printf '%s' "$lost_unpushed" > "$dir/$name.unpushed"
         printf '%s' "$lost_dirty" > "$dir/$name.uncommitted"
         echo "$rc" > "$dir/$name.rc"
+        incus exec "$name" -- sh -c 'pgrep -x claude >/dev/null || exit 0; cat /home/andre/.config/chimera/agent 2>/dev/null || echo waiting' \
+          </dev/null > "$dir/$name.agent" 2>/dev/null || true
       done
       python3 "$report" build "$dir" "$busy" <<<"$json"
     }
@@ -252,11 +256,27 @@ write_files:
       not_base "$name"
       need "$name"
       ready "$name"
+      in_tmux "$name" run awake "$@"
+      echo "Started in $name. Watch it with 'chimera shell $name'."
+    }
+
+    in_tmux() {
+      local name=$1 window=$2 script
+      shift 2
       script=/tmp/chimera-run-$(date +%s%N).sh
       { printf 'cd %q\n' "$(repo_dir "$name")"; printf '%q ' "$@"; } | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
       incus exec "$name" -- sudo -iu andre sh -c \
-        "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main 'awake bash -l $script; exec bash -l'"
-      echo "Started in $name. Watch it with 'chimera shell $name'."
+        "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main -n $window 'bash -l $script; exec bash -l'"
+    }
+
+    start_agent() {
+      local name=$1 task=$2
+      incus exec "$name" -- sudo -u andre -H sh -c \
+        'jq --arg d "$1" ".projects[\$d].hasTrustDialogAccepted = true" ~/.claude.json > ~/.claude.json.new && mv ~/.claude.json.new ~/.claude.json' \
+        sh "$(repo_dir "$name")"
+      in_tmux "$name" claude claude --dangerously-skip-permissions "$task
+
+    When you're done, commit your work and push branch chimera/$name to origin."
     }
 
     cmd_shell() {
@@ -458,7 +478,10 @@ write_files:
     sudo -iu andre bash <<'EOF'
     set -euo pipefail
     curl -fsSL https://claude.ai/install.sh | bash
-    [ -e ~/.claude.json ] || echo '{"hasCompletedOnboarding": true}' > ~/.claude.json
+    merge() { [ -e "$1" ] || echo '{}' > "$1"; jq "$2" "$1" > "$1.new" && mv "$1.new" "$1"; }
+    merge ~/.claude.json '.hasCompletedOnboarding = true'
+    mkdir -p ~/.claude
+    merge ~/.claude/settings.json '.theme = "dark" | .skipDangerousModePermissionPrompt = true'
     install -d -m 700 ~/.config/chimera
     echo '[ -f ~/.config/chimera/env ] && . ~/.config/chimera/env' >> ~/.profile
     git config --global user.name "Andre Ramos"
@@ -489,6 +512,10 @@ write_files:
             "error": "couldn't reach GitHub" if rc == ["2"] else None,
         }
 
+    def agent(directory, name):
+        word = lines(f"{directory}/{name}.agent")
+        return word[0] if word in (["working"], ["waiting"]) else None
+
     def workspace(directory, container):
         return {
             "name": container["name"],
@@ -498,6 +525,7 @@ write_files:
             "repo": meta(container, "repo"),
             "branch": meta(container, "branch"),
             "work": work(directory, container["name"]),
+            "agent": agent(directory, container["name"]),
         }
 
     def containers():
@@ -709,6 +737,9 @@ write_files:
     running = any(t.get("status") == "running" for t in tasks)
     print(int(event == "UserPromptSubmit" or (event == "Stop" and running) or bool(d.get("session_crons"))))
     ' 2>/dev/null) || exit 0
+    if [ -d "$HOME/.config/chimera" ]; then
+      if [ "$busy" = 1 ]; then echo working; else echo waiting; fi > "$HOME/.config/chimera/agent"
+    fi
     holder="tail --pid=$pid -f /dev/null"
     if [ "$busy" = 1 ]; then
       pgrep -f "$holder" >/dev/null \

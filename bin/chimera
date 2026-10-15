@@ -88,8 +88,8 @@ cmd_ls() {
   info=$(read_state)
   echo "Computer $(jq -r .state <<<"$info"). $(report_age "$info")"
   if jq -e '.workspaces | length == 0' <<<"$info" >/dev/null; then echo "No containers."; return; fi
-  jq -r '(["NAME", "STATE", "WANT", "FROM", "TASK", "REPO", "BRANCH"] | @tsv),
-    (.workspaces[] | [.name, .state // "-", .want // "not managed", .parent // "-", .task // "-", .repo // "-", .branch // "-"] | @tsv)' <<<"$info" \
+  jq -r '(["NAME", "STATE", "WANT", "AGENT", "FROM", "TASK", "REPO", "BRANCH"] | @tsv),
+    (.workspaces[] | [.name, .state // "-", .want // "not managed", .agent // "-", .parent // "-", .task // "-", .repo // "-", .branch // "-"] | @tsv)' <<<"$info" \
     | column -t -s $'\t'
   if jq -e 'any(.workspaces[]; .error != null)' <<<"$info" >/dev/null; then
     echo
