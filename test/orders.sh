@@ -16,7 +16,7 @@ cleanup() {
     c rm "$name" --force >/dev/null 2>&1 || true
     drop_branch "$name"
   done
-  remote "incus delete -f c-hand" >/dev/null 2>&1 || true
+  ssh -o ProxyCommand=none -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "incus delete -f c-hand" </dev/null >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
