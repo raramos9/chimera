@@ -153,6 +153,12 @@ cd control && npx wrangler secret put AGENT_TOKEN < ~/.config/chimera/agent-toke
 
 Until both are done, the computer skips its reports and `status` says `No report yet.`
 
+### The dashboard
+
+Open the Worker's address (https://chimera-control.ralphandrer04.workers.dev) in any browser. The first visit asks for the wake password, the same one the phone Shortcut sends, and that browser remembers it. On the iPhone, Share > Add to Home Screen makes it an app icon.
+
+The page shows the same information as `status` and `ls` and refreshes every 10 seconds. It can wake the computer, put it to sleep, start a new task, and start, stop or delete containers. Delete lists any work that isn't on GitHub and asks before throwing it away. Sleep asks first if Claude is working. Sleep is a gentle shutdown, so the computer backs itself up before it powers off.
+
 ## Software updates
 
 Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.
