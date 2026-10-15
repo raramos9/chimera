@@ -51,6 +51,17 @@ for c in chimera-test chimera-test-fork; do
 done
 remote "incus exec chimera-test -- test ! -e /root/only-in-fork" || fail "a change in the fork showed up in the original"
 
+boot=$(remote "cat /proc/sys/kernel/random/boot_id")
+remote "sudo systemctl reboot" || true
+for _ in $(seq 60); do
+  now=$(remote "cat /proc/sys/kernel/random/boot_id" 2>/dev/null || true)
+  [ -n "$now" ] && [ "$now" != "$boot" ] && break
+  sleep 5
+done
+[ -n "$now" ] && [ "$now" != "$boot" ] || fail "the computer didn't come back from a reboot within 5 minutes"
+for _ in $(seq 30); do [ "$(state chimera-test 2>/dev/null)" = RUNNING ] && break; sleep 2; done
+[ "$(state chimera-test)" = RUNNING ] || fail "Incus didn't come back after a reboot"
+
 backup=$(remote "sudo chimera-restic ls --recursive latest /home/.chimera/incus /home/.chimera/docker/volumes")
 grep -q '^/home/.chimera/incus/database' <<<"$backup" || fail "the shutdown backup is missing Incus's records"
 ! grep -q '^/home/.chimera/incus/storage-pools/default/' <<<"$backup" || fail "the shutdown backup copied the containers"
@@ -59,4 +70,4 @@ grep -q '^/home/.chimera/docker/volumes' <<<"$backup" || fail "the shutdown back
 remote "incus delete -f chimera-test chimera-test-fork"
 
 echo "Wake timing: incus answered ${incus_seconds}s after wake started"
-echo "PASS: containers on chimera-machines survived sleep and wake, restarted, kept their files and internet, and stayed out of the backup"
+echo "PASS: containers on chimera-machines survived sleep, wake and reboot, restarted, kept their files and internet, and stayed out of the backup"

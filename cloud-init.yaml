@@ -880,7 +880,7 @@ runcmd:
 - systemctl reload systemd-logind
 - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
 - systemctl enable --now chimera-firewall.service
-- systemctl start incus.socket incus-user.socket incus-startup.service
+- systemctl enable --now incus.socket incus-user.socket incus-startup.service
 - |
   incus admin waitready --timeout 60
   if ! incus storage show default >/dev/null 2>&1; then
