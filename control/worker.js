@@ -447,6 +447,10 @@ async function want(request, env) {
   const requested = (await request.text()).trim();
   if (requested !== "awake" && requested !== "asleep") return text("Say awake or asleep.", 400);
   await records(env).setWant(requested);
+  if (requested === "asleep") {
+    const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
+    if (servers[0]?.status === "running") await hetzner(env, ...sweepRequests.shutdown(servers[0].id));
+  }
   return new Response(null, { status: 204 });
 }
 

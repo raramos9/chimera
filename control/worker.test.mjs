@@ -504,9 +504,22 @@ await runWake("a wake request records that you want it awake", [], () => wake("p
   assert.ok(nearNow(storage.get("computer").wantAt));
 });
 
+list = () => new Response(JSON.stringify({ servers: [] }));
+calls.length = 0;
 res = await call("POST", "/want", { body: "asleep\n" });
 assert.equal(res.status, 204);
 assert.equal(storage.get("computer").want, "asleep");
+assert.equal(posts().length, 0);
+console.log("PASS: asleep with no server records the want and shuts nothing down");
+list = () => new Response(JSON.stringify({ servers: [{ id: 42, name: "chimera", status: "running", created: secondsAgo(600) }] }));
+calls.length = 0;
+res = await call("POST", "/want", { body: "asleep" });
+assert.equal(res.status, 204);
+assert.deepEqual(posts().map((c) => c.url), ["https://api.hetzner.cloud/v1/servers/42/actions/shutdown"]);
+console.log("PASS: asleep with a running server asks it to shut down once");
+calls.length = 0;
+res = await call("POST", "/want", { body: "awake" });
+assert.equal(calls.length, 0);
 res = await call("POST", "/want", { body: "awake" });
 assert.equal(storage.get("computer").want, "awake");
 for (const bad of ["", "sleep", "AWAKE", "awake please"]) {
