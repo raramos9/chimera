@@ -115,7 +115,9 @@ Both logins go into `base`, so every container made after that has them.
 
 The tokens are stored in `~/.config/chimera/secrets` on the computer. Every container can read them, so anything running in a container could use them. Revoke them on claude.ai or GitHub if that ever worries you.
 
-`chimera base` also picks up changes to what's installed in `base`, which is listed in `/usr/local/share/chimera/base-setup.sh` (from `cloud-init.yaml`). It takes about 90 seconds.
+`chimera base` also picks up changes to what's installed in `base`, which is listed in `/usr/local/share/chimera/base-setup.sh` (from `cloud-init.yaml`). It takes about two minutes.
+
+It also gives `base` your Claude Code setup. It clones `raramos9/ack` into `~/ack` with the GitHub token and runs its `install.sh`, the same way the laptop gets its skills, agents, `CLAUDE.md` and settings. Then it installs bun and every plugin `settings.json` turns on. Only what's pushed to `ack` arrives, so push stack changes, then run `chimera base`. A plugin that can't be installed prints a warning and is skipped. To update one container instead, run `git -C ~/ack pull` inside it.
 
 Containers are not backed up. Treat them as workbenches and push anything worth keeping to GitHub. Incus's own records, like which containers exist, are on `chimera-home` and are backed up.
 

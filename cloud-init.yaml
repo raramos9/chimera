@@ -96,6 +96,7 @@ write_files:
 
     secrets=/home/andre/.config/chimera/secrets
     setup=/usr/local/share/chimera/base-setup.sh
+    stack=/usr/local/share/chimera/stack-setup.sh
     report=/usr/local/share/chimera/report.py
     control=https://chimera-control.ralphandrer04.workers.dev
 
@@ -446,6 +447,8 @@ write_files:
       incus file push -p /etc/claude-code/managed-settings.json base-new/etc/claude-code/managed-settings.json
       { secret_env claude CLAUDE_CODE_OAUTH_TOKEN; secret_env github GH_TOKEN; } \
         | incus exec base-new -- sh -c 'umask 077 && cat > /home/andre/.config/chimera/env && chown andre:andre /home/andre/.config/chimera/env'
+      incus file push "$stack" base-new/tmp/stack-setup.sh
+      incus exec base-new -- sudo -iu andre bash /tmp/stack-setup.sh </dev/null
       incus stop base-new
       incus delete -f base >/dev/null 2>&1 || true
       incus move base-new base
@@ -471,7 +474,7 @@ write_files:
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
     echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
     apt-get update -q
-    apt-get install -yq git tmux curl ca-certificates jq ripgrep build-essential docker.io gh
+    apt-get install -yq git tmux curl ca-certificates jq ripgrep build-essential docker.io gh unzip
     apt-get clean
     usermod -aG docker andre
 
@@ -488,6 +491,24 @@ write_files:
     git config --global user.email ralphandrer04@gmail.com
     git config --global credential.https://github.com.helper '!gh auth git-credential'
     EOF
+- path: /usr/local/share/chimera/stack-setup.sh
+  content: |
+    set -euo pipefail
+    if [ -z "${GH_TOKEN:-}" ]; then
+      echo "chimera: no github token yet, so new containers won't have your Claude stack. Add it with 'chimera secret github'." >&2
+      exit 0
+    fi
+    curl -fsSL https://bun.sh/install | BUN_INSTALL=~/.local bash >/dev/null
+    gh repo clone raramos9/ack ~/ack -- -q
+    rm ~/.claude/settings.json
+    ~/ack/install.sh >/dev/null
+    claude plugin marketplace add anthropics/claude-plugins-official >/dev/null
+    jq -r '.extraKnownMarketplaces // {} | .[].source.repo // empty' ~/.claude/settings.json | while read -r repo; do
+      claude plugin marketplace add "$repo" </dev/null >/dev/null
+    done
+    jq -r '.enabledPlugins // {} | to_entries[] | select(.value) | .key' ~/.claude/settings.json | while read -r plugin; do
+      claude plugin install "$plugin" </dev/null >/dev/null || echo "chimera: couldn't install the $plugin plugin, so containers won't have it." >&2
+    done
 - path: /usr/local/share/chimera/report.py
   content: |
     import json, sys
