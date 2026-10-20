@@ -8,10 +8,10 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
 remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none andre@chimera "$@" </dev/null; }
 
-# Usage: terminal ARG ORIGIN TYPED. Prints what the Watch page's terminal shows within 8 seconds, or "refused CODE".
+# Usage: [COLS=N] [SECONDS_OPEN=N] terminal ARG ORIGIN TYPED. Prints what the Watch page's terminal shows within 2+SECONDS_OPEN seconds (default 6), or "refused CODE".
 terminal() {
   python3 - "$site" "$@" <<'EOF'
-import json, sys, time
+import json, os, sys, time
 from websockets.exceptions import InvalidStatus
 from websockets.sync.client import connect
 site, arg, origin, typed = sys.argv[1:]
@@ -21,11 +21,11 @@ try:
 except InvalidStatus as refused:
     sys.exit(f"refused {refused.response.status_code}")
 with ws:
-    ws.send(json.dumps({"AuthToken": "", "columns": 100, "rows": 30}).encode())
+    ws.send(json.dumps({"AuthToken": "", "columns": int(os.environ.get("COLS", 100)), "rows": 30}).encode())
     time.sleep(2)
     if typed:
         ws.send(b"0" + typed.encode() + b"\r")
-    end = time.time() + 6
+    end = time.time() + int(os.environ.get("SECONDS_OPEN", 6))
     while time.time() < end:
         try:
             message = ws.recv(timeout=end - time.time())
@@ -56,6 +56,18 @@ answer=$((a * b))
 [ "$(curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' "$site/")" = 200 ] || fail "$site/ didn't load"
 terminal c-watch "$site" "echo \$(($a*$b))watched" | grep -q "${answer}watched" \
   || fail "typing into the Watch page didn't run in c-watch's claude window"
+width() { remote "incus exec c-watch -- sudo -iu andre tmux display -p -t main:claude '#{window_width}'"; }
+COLS=100 SECONDS_OPEN=16 terminal c-watch "$site" "" >/dev/null &
+watcher=$!
+sleep 5
+before=$(width)
+[ "$before" = 100 ] || fail "the full Watch page didn't size c-watch's claude window to 100 columns, got $before"
+COLS=60 terminal "c-watch&arg=view" "$site" "echo viewonly\$((1+1))" | grep -q "${answer}watched" \
+  || fail "the preview didn't show c-watch's claude window"
+! remote "incus exec c-watch -- sudo -iu andre tmux capture-pane -p -t main:claude" | grep -q viewonly \
+  || fail "typing into the preview reached c-watch's claude window"
+[ "$(width)" = "$before" ] || fail "the preview resized c-watch's claude window from $before to $(width) columns"
+wait "$watcher"
 terminal nope "$site" "" | grep -q "No such container: nope" || fail "the Watch page didn't refuse an unknown container"
 refusal=$(terminal c-watch https://example.com "" 2>&1 || true)
 [[ $refusal == "refused "* ]] || fail "the Watch page let in a connection from another website: $refusal"
@@ -71,4 +83,4 @@ c rm c-watch --yes >/dev/null
 "$chimera" sleep
 [ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep after sleep"
 
-echo "PASS: the Watch page types into a container's claude window, and only the tailnet can open it"
+echo "PASS: the Watch page types into a container's claude window, the preview only looks, and only the tailnet can open it"

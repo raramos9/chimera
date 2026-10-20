@@ -721,7 +721,9 @@ write_files:
     if ! [[ $name =~ ^[a-z][a-z0-9-]{0,62}$ && $name != base ]] || ! incus list -c n -f csv | grep -qx "$name"; then
       echo "No such container: $name"; sleep 5; exit 1
     fi
-    incus exec "$name" -- sudo -iu andre tmux attach -t main:claude || { echo "Claude isn't running in $name."; sleep 5; }
+    flags=()
+    [[ ${2-} == view ]] && flags=(-f read-only,ignore-size)
+    incus exec "$name" -- sudo -iu andre tmux attach "${flags[@]}" -t main:claude || { echo "Claude isn't running in $name."; sleep 5; }
 - path: /etc/systemd/system/chimera-watch.service
   content: |
     [Unit]
