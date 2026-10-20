@@ -69,7 +69,7 @@ const records = new Records(
 );
 const RECORDS = { idFromName: (id) => id, get: () => records };
 const testEnv = (extra = {}) =>
-  ({ HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440", WAKE_TOKEN: "pw", AGENT_TOKEN: "agent", RECORDS, ...extra });
+  ({ HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440", WAKE_TOKEN: "pw", AGENT_TOKEN: "agent", CLAUDE_TOKEN: "claude", RECORDS, ...extra });
 
 const unpackUserData = (packed) => {
   const [, base64] = packed.match(/^Content-Transfer-Encoding: base64\n\n(\S+)\n--chimera--\n$/m);
@@ -364,7 +364,7 @@ const sendReport = (workspaces, busy = false) =>
 const secondsAgo = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
 const nearNow = (time) => Math.abs(Date.parse(time) - Date.now()) < 5000;
 
-const tokenValues = { WAKE_TOKEN: "pw", AGENT_TOKEN: "agent" };
+const tokenValues = { WAKE_TOKEN: "pw", AGENT_TOKEN: "agent", CLAUDE_TOKEN: "claude" };
 for (const [method, path, tokenVars] of [
   ["POST", "/wake", ["WAKE_TOKEN"]],
   ["POST", "/want", ["WAKE_TOKEN"]],
@@ -373,6 +373,8 @@ for (const [method, path, tokenVars] of [
   ["GET", "/orders", ["AGENT_TOKEN"]],
   ["POST", "/report", ["AGENT_TOKEN"]],
   ["GET", "/agent", ["AGENT_TOKEN"]],
+  ["POST", "/mcp", ["CLAUDE_TOKEN"]],
+  ["GET", "/mcp", ["CLAUDE_TOKEN"]],
 ]) {
   storage.clear();
   calls.length = 0;
@@ -821,3 +823,169 @@ assert.deepEqual([autoResponse.request, autoResponse.response], ["ping", "pong"]
 await placeOrder(runningServer, { action: "new", name: "z" });
 assert.deepEqual(sockets[0].sent, ["orders"]);
 console.log("PASS: /agent accepts the computer's WebSocket, answers pings while hibernating, and order changes reach it");
+
+const rpc = async (message, { token = "claude", raw, env } = {}) => {
+  const r = await call("POST", "/mcp", { token, body: raw ?? JSON.stringify(message), env });
+  const text = await r.text();
+  return { status: r.status, type: r.headers.get("Content-Type"), body: text ? JSON.parse(text) : null };
+};
+const tool = async (toolName, args, options) => (await rpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: toolName, arguments: args } }, options)).body;
+const initialize = (protocolVersion) => rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion } });
+
+resetRecords();
+let rpcRes = await initialize("2025-03-26");
+assert.equal(rpcRes.status, 200);
+assert.equal(rpcRes.type, "application/json");
+assert.deepEqual([rpcRes.body.jsonrpc, rpcRes.body.id], ["2.0", 1]);
+assert.equal(rpcRes.body.result.protocolVersion, "2025-03-26");
+assert.deepEqual(rpcRes.body.result.capabilities, { tools: {} });
+assert.deepEqual(rpcRes.body.result.serverInfo, { name: "chimera", version: "1" });
+assert.ok(rpcRes.body.result.instructions.length > 0);
+assert.equal((await initialize("2025-11-25")).body.result.protocolVersion, "2025-11-25");
+assert.equal((await initialize("1999-01-01")).body.result.protocolVersion, "2025-06-18");
+assert.equal((await initialize(undefined)).body.result.protocolVersion, "2025-06-18");
+assert.deepEqual((await rpc({ jsonrpc: "2.0", id: "p", method: "ping" })).body, { jsonrpc: "2.0", id: "p", result: {} });
+console.log("PASS: MCP initialize echoes a supported version and falls back to 2025-06-18, ping answers");
+
+rpcRes = await rpc({ jsonrpc: "2.0", method: "notifications/initialized" });
+assert.deepEqual([rpcRes.status, rpcRes.body], [202, null]);
+console.log("PASS: MCP notifications get 202 and no body");
+
+rpcRes = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+const listed = rpcRes.body.result.tools;
+assert.deepEqual(listed.map((t) => t.name).sort(),
+  ["container_results", "delete_container", "fork_container", "list_containers", "new_container", "start_container", "stop_container"]);
+for (const t of listed) {
+  assert.equal(t.inputSchema.additionalProperties, false, t.name);
+  assert.equal(t.inputSchema.type, "object", t.name);
+  assert.ok(t.description.length > 0 && t.annotations, t.name);
+  assert.equal(t.run, undefined);
+}
+const toolByName = Object.fromEntries(listed.map((t) => [t.name, t]));
+assert.deepEqual(toolByName.new_container.inputSchema.required, ["name"]);
+assert.deepEqual(toolByName.fork_container.inputSchema.required, ["from", "name"]);
+assert.equal(toolByName.list_containers.annotations.readOnlyHint, true);
+assert.equal(toolByName.container_results.annotations.readOnlyHint, true);
+assert.equal(toolByName.delete_container.annotations.destructiveHint, true);
+assert.match(toolByName.delete_container.description, /unpushed or uncommitted work/);
+assert.match(toolByName.delete_container.description, /only the human can force/);
+console.log("PASS: MCP tools/list is built from the tool table and every schema is closed");
+
+for (const [label, message, status, code] of [
+  ["unknown method", { jsonrpc: "2.0", id: 3, method: "resources/list" }, 200, -32601],
+  ["unknown tool", { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "format_disk" } }, 200, -32602],
+  ["no params on tools/call", { jsonrpc: "2.0", id: 3, method: "tools/call" }, 200, -32602],
+  ["wrong version", { jsonrpc: "1.0", id: 3, method: "ping" }, 400, -32600],
+  ["batch", [{ jsonrpc: "2.0", id: 3, method: "ping" }], 400, -32600],
+  ["not an object", 5, 400, -32600],
+]) {
+  rpcRes = await rpc(message);
+  assert.equal(rpcRes.status, status, label);
+  assert.equal(rpcRes.body.error.code, code, label);
+  assert.equal(rpcRes.body.result, undefined, label);
+}
+assert.equal((await rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "format_disk" } })).body.error.message, "Unknown tool format_disk");
+rpcRes = await rpc(null, { raw: "not json" });
+assert.deepEqual([rpcRes.status, rpcRes.body.id, rpcRes.body.error.code], [400, null, -32700]);
+console.log("PASS: MCP refuses unknown methods and tools, bad JSON and batches with JSON-RPC errors");
+
+storage.clear();
+storage.set("computer", { want: "awake", wantAt: secondsAgo(120), busy: false, reportedAt: secondsAgo(40) });
+storage.set("workspaces", [workspace("a", { repo: "o/r" }), workspace("b", { repo: null, branch: null })]);
+storage.set("orders", { pending: orderRow("pending", "running", 6, { task: "t", repo: "o/p" }) });
+list = () => new Response(JSON.stringify({ servers: runningServer }));
+calls.length = 0;
+const mcpState = JSON.parse((await tool("list_containers", {})).result.content[0].text);
+const httpState = await (await call("GET", "/state")).json();
+assert.deepEqual(mcpState, httpState);
+assert.ok(calls.some((c) => c.url === "https://api.hetzner.cloud/v1/servers?name=chimera"));
+console.log("PASS: list_containers returns what GET /state returns");
+
+calls.length = 0;
+let toolRes = (await tool("container_results", { name: "a" })).result;
+assert.equal(toolRes.isError, false);
+let row = JSON.parse(toolRes.content[0].text);
+assert.equal(row.name, "a");
+assert.equal(row.compare, "https://github.com/o/r/compare/chimera/a");
+assert.equal(JSON.parse((await tool("container_results", { name: "b" })).result.content[0].text).compare, null);
+row = JSON.parse((await tool("container_results", { name: "pending" })).result.content[0].text);
+assert.deepEqual([row.rev, row.compare], [6, null]);
+toolRes = (await tool("container_results", { name: "ghost" })).result;
+assert.deepEqual([toolRes.isError, toolRes.content[0].text], [true, "There's no container called ghost."]);
+assert.equal(calls.length, 0);
+console.log("PASS: container_results gives one row with a compare link, refuses unknown names and never calls Hetzner");
+
+resetRecords();
+sockets.push(fakeSocket());
+calls.length = 0;
+list = () => new Response(JSON.stringify({ servers: [] }));
+toolRes = (await tool("new_container", { name: "m", task: "do it", repo: "o/r", force: true, from: "ignored-by-new" })).result;
+assert.equal(toolRes.isError, false);
+assert.equal(toolRes.content[0].text, "Ordered (rev 1). The computer is waking up; check list_containers in about a minute.");
+assert.equal(serverPosts().length, 1);
+assert.deepEqual({ ...storage.get("orders").m, orderedAt: undefined },
+  { name: "m", want: "running", force: false, from: "base", task: "do it", repo: "o/r", rev: 1, orderedAt: undefined });
+assert.deepEqual(nudges(), ["orders"]);
+list = () => new Response(JSON.stringify({ servers: runningServer }));
+calls.length = 0;
+assert.equal((await tool("new_container", { name: "n" })).result.content[0].text, "Ordered (rev 2).");
+assert.equal(serverPosts().length, 0);
+toolRes = (await tool("new_container", { name: "m" })).result;
+assert.deepEqual([toolRes.isError, toolRes.content[0].text], [true, "There's already a container or an order called m."]);
+for (const bad of [{}, { name: "Bad" }, { name: "x", repo: "nope" }, { name: 5 }]) {
+  toolRes = (await tool("new_container", bad)).result;
+  assert.deepEqual([toolRes.isError, toolRes.content[0].text],
+    [true, "That isn't a valid order. Names are lowercase letters, digits and dashes; repo is OWNER/REPO."], JSON.stringify(bad));
+}
+toolRes = (await rpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "new_container" } })).body.result;
+assert.equal(toolRes.isError, true);
+assert.equal(storage.get("rev"), 2);
+console.log("PASS: new_container orders and wakes, drops a force argument and refuses bad or taken names");
+
+resetRecords();
+storage.set("workspaces", [workspace("hand")]);
+toolRes = (await tool("fork_container", { from: "hand", name: "kid", task: "try" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 1).");
+assert.deepEqual([storage.get("orders").kid.from, storage.get("orders").kid.task], ["hand", "try"]);
+assert.equal((await tool("fork_container", { from: "ghost", name: "k2" })).result.content[0].text, "There's no container called ghost.");
+assert.equal((await tool("stop_container", { name: "hand" })).result.content[0].text, "Ordered (rev 2).");
+assert.equal(storage.get("orders").hand.want, "stopped");
+assert.equal((await tool("start_container", { name: "hand" })).result.content[0].text, "Ordered (rev 3).");
+assert.equal(storage.get("orders").hand.want, "running");
+console.log("PASS: fork, stop and start container place orders");
+
+assert.equal((await tool("delete_container", { name: "hand", force: true })).result.content[0].text, "Ordered (rev 4).");
+assert.equal(storage.get("orders").hand.want, "gone");
+assert.equal(storage.get("orders").hand.force, false);
+assert.equal((await tool("delete_container", { name: "ghost" })).result.isError, true);
+console.log("PASS: delete_container never sends force");
+
+resetRecords([workspace("r1"), workspace("r2")]);
+storage.set("orders", {
+  p1: orderRow("p1", "running", 1),
+  r1: orderRow("r1", "stopped", 2),
+  bye: orderRow("bye", "gone", 3),
+});
+storage.set("rev", 3);
+list = () => new Response(JSON.stringify({ servers: runningServer }));
+toolRes = (await tool("new_container", { name: "fourth" })).result;
+assert.deepEqual([toolRes.isError, toolRes.content[0].text], [true, "There are already 3 containers. Delete one before making another."]);
+toolRes = (await tool("fork_container", { from: "base", name: "fourth" })).result;
+assert.equal(toolRes.isError, true);
+assert.equal(storage.get("orders").fourth, undefined);
+assert.equal((await tool("stop_container", { name: "r2" })).result.isError, false);
+assert.equal((await tool("delete_container", { name: "p1" })).result.isError, false);
+assert.equal((await tool("new_container", { name: "fourth" })).result.isError, false);
+console.log("PASS: Claude can't make a 4th container; reported and pending count once, deleting ones don't count");
+
+placed = await placeOrder(runningServer, { action: "new", name: "fifth" });
+assert.equal(placed.status, 200);
+placed = await placeOrder(runningServer, { action: "fork", name: "sixth", from: "base" }, "agent");
+assert.equal(placed.status, 200);
+console.log("PASS: HTTP orders with the wake or agent token are not limited");
+
+list = () => new Response("down", { status: 500 });
+toolRes = (await tool("list_containers", {})).result;
+assert.equal(toolRes.isError, true);
+assert.match(toolRes.content[0].text, /^Something went wrong: GET \/servers\?name=chimera: 500 down/);
+console.log("PASS: a Hetzner failure becomes an error result, not a 500");

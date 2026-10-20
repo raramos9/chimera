@@ -169,6 +169,20 @@ Only devices on your tailnet can open it. There is no password, because getting 
 
 The page stops working when the computer sleeps, and opening it doesn't wake the computer. `test/watch.sh` checks all of this.
 
+### Letting Claude manage containers
+
+The Worker also speaks MCP at `/mcp`, so Claude Code on the laptop can list containers, make and fork them, start and stop them, delete them, and read their results, all by itself. It uses its own password, so the wake password and the computer's password don't open it.
+
+Claude can't force a delete: if a container has work that isn't on GitHub, the delete is refused and only you can force it. It can't put the computer to sleep, restore backups or build images, and it can't make a fourth container while three exist. Its orders wake the computer like any other, and finish on their own a little later.
+
+Set this up once:
+
+```
+openssl rand -hex 32 > ~/.config/chimera/claude-token
+cd control && npx wrangler secret put CLAUDE_TOKEN < ~/.config/chimera/claude-token
+claude mcp add --transport http --scope user chimera https://chimera-control.ralphandrer04.workers.dev/mcp --header "Authorization: Bearer $(cat ~/.config/chimera/claude-token)"
+```
+
 ## Software updates
 
 Each wake starts from a saved image that already has Tailscale, Docker, restic and the latest Ubuntu updates installed, which makes waking about 15 to 25 seconds faster than installing them every time. `image.yaml` lists what goes in it. Your settings and scripts stay in `cloud-init.yaml`, so changing those doesn't need a new image.

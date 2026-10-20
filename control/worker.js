@@ -226,11 +226,13 @@ function setWant(want) {
 const orderActions = {
   new: {
     wakes: true,
+    creates: true,
     place: ({ name, task, repo }, { known }) =>
       known(name) ? { refused: taken(name) } : { order: { name, want: "running", force: false, from: "base", task: task ?? null, repo: repo ?? null } },
   },
   fork: {
     wakes: true,
+    creates: true,
     place: ({ name, from, task }, { orders, reported, known }) => {
       if (from !== "base" && !reported.has(from) && !(orders[from] && orders[from].want !== "gone")) return { refused: missing(from) };
       if (known(name)) return { refused: taken(name) };
@@ -338,12 +340,18 @@ export class Records extends DurableObject {
     await this.ctx.storage.put("results", results);
   }
 
-  async order(request) {
+  async order(request, limits = {}) {
     const orders = await this.stored("orders", {});
     const reported = new Set((await this.stored("workspaces", [])).map((w) => w.name));
     const known = (name) => Boolean(orders[name]) || reported.has(name);
     const placed = orderActions[request.action].place(request, { orders, reported, known });
     if (placed.refused) return placed;
+    if (limits.maxContainers && orderActions[request.action].creates) {
+      const live = new Set([...reported, ...Object.values(orders).filter((o) => o.want !== "gone").map((o) => o.name)]);
+      if (live.size >= limits.maxContainers) {
+        return { refused: [409, `There are already ${limits.maxContainers} containers. Delete one before making another.`] };
+      }
+    }
     const rev = (await this.stored("rev", 0)) + 1;
     orders[request.name] = { ...placed.order, rev, orderedAt: new Date().toISOString() };
     await this.ctx.storage.put("orders", orders);
@@ -420,13 +428,18 @@ async function wake(request, env) {
 
 const json = (body) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 
-async function placeOrder(request, env) {
-  const body = await request.json().catch(() => null);
-  if (!validOrderRequest(body)) return text("Bad order.", 400);
-  const placed = await records(env).order(body);
-  if (placed.refused) return text(placed.refused[1], placed.refused[0]);
+async function submitOrder(env, body, limits) {
+  if (!validOrderRequest(body)) return { refused: [400, "Bad order."] };
+  const placed = await records(env).order(body, limits);
+  if (placed.refused) return placed;
   const outcome = orderActions[body.action].wakes ? await wakeServer(env) : null;
-  return json({ rev: placed.rev, woke: outcome === "create" || outcome === "replace" ? outcome : null });
+  return { rev: placed.rev, woke: outcome === "create" || outcome === "replace" ? outcome : null };
+}
+
+async function placeOrder(request, env) {
+  const placed = await submitOrder(env, await request.json().catch(() => null));
+  if (placed.refused) return text(placed.refused[1], placed.refused[0]);
+  return json(placed);
 }
 
 async function listOrders(request, env) {
@@ -455,9 +468,131 @@ async function want(request, env) {
   return new Response(null, { status: 204 });
 }
 
-async function state(request, env) {
+async function readState(env) {
   const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
-  return json(buildState(servers[0] ?? null, await records(env).read(), Date.now()));
+  return buildState(servers[0] ?? null, await records(env).read(), Date.now());
+}
+
+async function state(request, env) {
+  return json(await readState(env));
+}
+
+const claudeLimits = { maxContainers: 3 };
+const badOrderForClaude = "That isn't a valid order. Names are lowercase letters, digits and dashes; repo is OWNER/REPO.";
+const refusalsForClaude = { 400: badOrderForClaude };
+
+const schema = (properties, required) => ({ type: "object", properties, required, additionalProperties: false });
+const nameProperty = { type: "string", description: "Lowercase letters, digits and dashes, starting with a letter." };
+const nameOnly = schema({ name: nameProperty }, ["name"]);
+const asyncNote = "Orders complete asynchronously and wake the computer (about 30 seconds): poll list_containers or container_results and compare rev with doneRev, and check error.";
+
+const dataResult = (data) => ({ text: JSON.stringify(data, null, 2) });
+
+function orderTool(action, description, inputSchema, annotations = { destructiveHint: false }) {
+  return {
+    description: `${description} ${asyncNote}`,
+    inputSchema,
+    annotations,
+    async run(args, env) {
+      const { name, task, repo, from } = args;
+      const placed = await submitOrder(env, { action, name, task, repo, from }, claudeLimits);
+      if (placed.refused) return { refused: refusalsForClaude[placed.refused[0]] ?? placed.refused[1] };
+      const woke = placed.woke ? " The computer is waking up; check list_containers in about a minute." : "";
+      return { text: `Ordered (rev ${placed.rev}).${woke}` };
+    },
+  };
+}
+
+const tools = {
+  list_containers: {
+    description: "Shows the computer's state and every container: its task, repo, branch, unpushed or uncommitted work, whether the agent is working, and the latest order's rev, doneRev and error. Asks Hetzner, so it is the live view.",
+    inputSchema: schema({}, []),
+    annotations: { readOnlyHint: true },
+    run: async (args, env) => dataResult(await readState(env)),
+  },
+  container_results: {
+    description: "Shows one container's row (task, branch, work not yet pushed, latest order outcome) and a GitHub compare link for its branch. Reads the stored records only, so it is quick and works while the computer sleeps.",
+    inputSchema: nameOnly,
+    annotations: { readOnlyHint: true },
+    async run({ name: wanted }, env) {
+      const { workspaces, orders, results } = await records(env).read();
+      const row = withOrders(workspaces, orders, results).find((w) => w.name === wanted);
+      if (!row) return { refused: missing(wanted)[1] };
+      return dataResult({ ...row, compare: row.repo && row.branch ? `https://github.com/${row.repo}/compare/${row.branch}` : null });
+    },
+  },
+  new_container: orderTool("new",
+    "Makes a container called name. With task and repo (OWNER/REPO) it clones the repo onto branch chimera/NAME and starts Claude on the task.",
+    schema({
+      name: nameProperty,
+      task: { type: "string", description: "What the Claude agent in the container should do." },
+      repo: { type: "string", description: "GitHub repo as OWNER/REPO." },
+    }, ["name"])),
+  fork_container: orderTool("fork",
+    "Copies the container called from into a new one called name, optionally starting Claude on a task. Use from \"base\" for a fresh copy.",
+    schema({
+      from: { type: "string", description: "Name of the container to copy, or base." },
+      name: nameProperty,
+      task: { type: "string", description: "What the Claude agent in the new container should do." },
+    }, ["from", "name"])),
+  start_container: orderTool("start", "Starts a stopped container called name.", nameOnly),
+  stop_container: orderTool("stop", "Stops the container called name without deleting it.", nameOnly),
+  delete_container: orderTool("rm",
+    "Deletes the container called name. It refuses when the container has unpushed or uncommitted work, and only the human can force it.",
+    nameOnly,
+    { destructiveHint: true }),
+};
+
+const protocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26"];
+
+class RpcError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+
+const rpcResponse = (id, payload, status = 200) =>
+  new Response(JSON.stringify({ jsonrpc: "2.0", id, ...payload }), { status, headers: { "Content-Type": "application/json" } });
+
+async function callTool({ name: toolName, arguments: args }, env) {
+  if (!Object.hasOwn(tools, toolName)) throw new RpcError(-32602, `Unknown tool ${toolName}`);
+  try {
+    const done = await tools[toolName].run(args ?? {}, env);
+    return { content: [{ type: "text", text: done.refused ?? done.text }], isError: done.refused !== undefined };
+  } catch (error) {
+    return { content: [{ type: "text", text: `Something went wrong: ${error.message}` }], isError: true };
+  }
+}
+
+const rpcMethods = {
+  initialize: ({ protocolVersion }) => ({
+    protocolVersion: protocolVersions.includes(protocolVersion) ? protocolVersion : "2025-06-18",
+    capabilities: { tools: {} },
+    serverInfo: { name, version: "1" },
+    instructions: "chimera is the user's sleeping cloud computer. Its containers each run a Claude agent on a repo branch; these tools make, fork, start, stop and delete them and show how they are doing.",
+  }),
+  ping: () => ({}),
+  "tools/list": () => ({
+    tools: Object.entries(tools).map(([toolName, { description, inputSchema, annotations }]) => ({ name: toolName, description, inputSchema, annotations })),
+  }),
+  "tools/call": (params, env) => callTool(params, env),
+};
+
+async function mcp(request, env) {
+  const message = await request.json().catch(() => undefined);
+  if (message === undefined) return rpcResponse(null, { error: { code: -32700, message: "That isn't JSON." } }, 400);
+  if (!message || Array.isArray(message) || message.jsonrpc !== "2.0" || !isText(message.method)) {
+    return rpcResponse(null, { error: { code: -32600, message: "Send one JSON-RPC 2.0 request. Batches aren't supported." } }, 400);
+  }
+  if (!Object.hasOwn(message, "id")) return new Response(null, { status: 202 });
+  try {
+    if (!Object.hasOwn(rpcMethods, message.method)) throw new RpcError(-32601, `Unknown method ${message.method}`);
+    return rpcResponse(message.id, { result: await rpcMethods[message.method](message.params ?? {}, env) });
+  } catch (error) {
+    if (!(error instanceof RpcError)) throw error;
+    return rpcResponse(message.id, { error: { code: error.code, message: error.message } });
+  }
 }
 
 async function dashboard() {
@@ -471,6 +606,8 @@ const routes = {
   "GET /state": [["WAKE_TOKEN", "AGENT_TOKEN"], state],
   "POST /orders": [["WAKE_TOKEN", "AGENT_TOKEN"], placeOrder],
   "GET /orders": [["AGENT_TOKEN"], listOrders],
+  "POST /mcp": [["CLAUDE_TOKEN"], mcp],
+  "GET /mcp": [["CLAUDE_TOKEN"], () => text("Use POST.", 405)],
   "POST /report": [["AGENT_TOKEN"], report],
   "GET /agent": [["AGENT_TOKEN"], agent],
 };
