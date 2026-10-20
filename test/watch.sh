@@ -8,7 +8,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
 remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none andre@chimera "$@" </dev/null; }
 
-# Usage: [COLS=N] [SECONDS_OPEN=N] terminal ARG ORIGIN TYPED. Prints what the Watch page's terminal shows within 2+SECONDS_OPEN seconds (default 6), or "refused CODE".
+# Usage: [COLS=N] [SECONDS_OPEN=N] [PREFS=1] terminal ARG ORIGIN TYPED. Prints what the Watch page's terminal shows within 2+SECONDS_OPEN seconds (default 6), plus its settings with PREFS=1, or "refused CODE".
 terminal() {
   python3 - "$site" "$@" <<'EOF'
 import json, os, sys, time
@@ -32,6 +32,8 @@ with ws:
         except Exception:
             break
         if isinstance(message, bytes) and message[:1] == b"0":
+            seen += message[1:]
+        elif isinstance(message, bytes) and message[:1] == b"2" and os.environ.get("PREFS"):
             seen += message[1:]
 print(seen.decode(errors="replace"))
 EOF
@@ -68,7 +70,9 @@ COLS=60 terminal "c-watch&arg=view" "$site" "echo viewonly\$((1+1))" | grep -q "
   || fail "typing into the preview reached c-watch's claude window"
 [ "$(width)" = "$before" ] || fail "the preview resized c-watch's claude window from $before to $(width) columns"
 wait "$watcher"
-terminal nope "$site" "" | grep -q "No such container: nope" || fail "the Watch page didn't refuse an unknown container"
+PREFS=1 terminal nope "$site" "" | grep -q '"background": *"#09090b"' || fail "the Watch page doesn't get the dashboard's dark terminal colours"
+refused_nope() { for _ in 1 2 3; do terminal nope "$site" "" | grep -q "No such container: nope" && return; done; return 1; }
+refused_nope || fail "the Watch page didn't refuse an unknown container"
 refusal=$(terminal c-watch https://example.com "" 2>&1 || true)
 [[ $refusal == "refused "* ]] || fail "the Watch page let in a connection from another website: $refusal"
 remote "journalctl -q -u chimera-watch --since -1min" | grep -q "refuse to serve WS client from different origin" \

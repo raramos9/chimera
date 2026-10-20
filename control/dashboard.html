@@ -8,84 +8,222 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Chimera">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0f0f11">
 <title>Chimera</title>
 <style>
 :root {
-  color-scheme: light dark;
-  --bg: #f6f4ef; --card: #fff; --ink: #1d1c1a; --dim: #6d6a63; --line: #dcd8ce;
-  --accent: #2f5d50; --on-accent: #fff; --bad: #b3261e; --warn: #8a5a00;
+  color-scheme: dark;
+  --bg: #0f0f11; --panel: #18181b; --line: #27272a; --ink: #e4e4e7; --dim: #a1a1aa;
+  --vio: #7c3aed; --vio-hover: #6d28d9; --ring: #a78bfa;
+  --amber: #f59e0b; --blue: #60a5fa; --red: #f87171; --green: #22c55e; --red-fill: #b91c1c;
+  --term: #09090b;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #151513; --card: #20201d; --ink: #ece9e2; --dim: #9a968c; --line: #35342f; --accent: #7fb5a3; --on-accent: #10201a; --bad: #ff8a80; --warn: #e0b45a; }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
-main { max-width: 640px; margin: 0 auto; padding: 16px 14px calc(32px + env(safe-area-inset-bottom)); }
-h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 28px 2px 8px; font-weight: 600; }
-section, .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 10px; }
-.big { font-size: 34px; font-weight: 650; margin: 0; }
-.dim { color: var(--dim); font-size: 14px; }
-.bad { color: var(--bad); }
-.warn { color: var(--warn); }
-.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 13.5px/1.45 -apple-system, "Helvetica Neue", system-ui, sans-serif; font-variant-numeric: tabular-nums; scrollbar-color: #3f3f46 transparent; }
+::selection { background: var(--vio); color: #fff; }
+input, textarea { caret-color: var(--ring); }
 button, input, textarea { font: inherit; color: inherit; }
-button, a.button { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
-a.button { display: inline-flex; align-items: center; color: var(--ink); text-decoration: none; }
-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
-button.danger { color: var(--bad); }
-button:disabled { opacity: .5; }
-input, textarea { width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
-textarea { min-height: 96px; resize: vertical; }
-label { display: block; font-size: 14px; color: var(--dim); margin: 12px 0 4px; }
-.name { font-weight: 650; font-size: 19px; overflow-wrap: anywhere; }
-.badge { font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--accent); color: var(--accent); }
-.task { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
-a { color: var(--accent); overflow-wrap: anywhere; }
-pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 8px; font: 13px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.link { background: none; border: 0; min-height: 44px; padding: 0; color: var(--dim); font-size: 14px; text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 [hidden] { display: none !important; }
+a { color: var(--ink); text-decoration-color: var(--dim); text-underline-offset: 2px; overflow-wrap: anywhere; }
+a:hover { text-decoration-color: var(--ink); }
+.dim { color: var(--dim); }
+.bad { color: var(--red); }
+
+button { min-height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; cursor: pointer; font-weight: 500; }
+button:hover:not(:disabled) { background: var(--panel); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--vio); border-color: var(--vio); color: #fff; }
+button.primary:hover:not(:disabled) { background: var(--vio-hover); border-color: var(--vio-hover); }
+button.chip { background: var(--ink); border-color: var(--ink); color: var(--bg); min-height: 28px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
+button.chip:hover:not(:disabled) { background: #fff; }
+button.danger { color: var(--red); }
+button.danger-fill { background: var(--red-fill); border-color: var(--red-fill); color: #fff; }
+button.danger-fill:hover:not(:disabled) { background: #991b1b; }
+button.link { border: 0; padding: 0; min-height: 28px; color: var(--dim); text-decoration: underline; text-underline-offset: 2px; background: none; font-weight: 400; }
+button.link:hover:not(:disabled) { background: none; color: var(--ink); }
+
+input, textarea { width: 100%; min-height: 32px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); }
+input::placeholder, textarea::placeholder { color: var(--dim); }
+textarea { min-height: 120px; resize: vertical; }
+label { display: block; color: var(--dim); font-size: 12.5px; font-weight: 600; margin: 14px 0 4px; }
+.help { color: var(--dim); font-size: 12.5px; margin-top: 4px; }
+
+#login { max-width: 360px; margin: 14vh auto 0; padding: 0 16px; }
+#login h1 { font-size: 22px; font-weight: 600; }
+#login p[role=alert] { min-height: 1.45em; margin: 8px 0; }
+
+.app { display: grid; grid-template-columns: 232px 440px minmax(0, 1fr); height: 100dvh; }
+.rail { border-right: 1px solid var(--line); padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; padding: 6px 8px; }
+.brand i { width: 20px; height: 20px; border-radius: 5px; background: var(--vio); display: inline-block; }
+.comp { margin-top: auto; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.comp .s { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.comp .d { color: var(--dim); font-size: 12.5px; margin-top: 4px; }
+.comp .acts { margin-top: 10px; }
+.comp button { width: 100%; }
+.comp .ask { margin-top: 8px; }
+.comp .ask .acts { flex-direction: column; }
+.railfoot { padding: 8px 8px 0; }
+#phoneFoot { display: none; padding: 16px; }
+
+.list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.lh { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.lh h1, .lh h2 { font-size: 13.5px; font-weight: 600; }
+.scroll { flex: 1; overflow: auto; min-height: 0; }
+.grp { padding: 14px 16px 6px; color: var(--dim); font-size: 12px; font-weight: 600; }
+.row { width: 100%; min-height: 56px; border-radius: 0; border: 0; border-bottom: 1px solid var(--line); padding: 12px 16px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; align-items: start; text-align: left; font-weight: 400; }
+.row[aria-current=true] { background: var(--panel); }
+.row:focus-visible { outline-offset: -2px; }
+.row > span:nth-child(2) { display: block; min-width: 0; }
+.row .n, .row .l { display: block; }
+.row .n { font-weight: 600; overflow-wrap: anywhere; }
+.row .l { color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .l.unsaved { color: var(--ink); font-weight: 500; }
+.row .t { color: var(--dim); font-size: 12px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; border: 2px solid var(--dim); display: inline-block; flex: none; }
+.dot.need { border-color: var(--amber); background: var(--amber); }
+.dot.work { border-color: var(--blue); border-right-color: transparent; animation: spin 1.1s linear infinite; }
+.dot.busy { border-color: var(--dim); border-style: dotted; }
+.dot.err { border-color: var(--red); background: var(--red); }
+.dot.run { background: var(--dim); }
+.dot.awake { border-color: var(--green); background: var(--green); margin-top: 0; }
+.comp .dot { margin-top: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dot.work { animation: none; border-right-color: var(--blue); border-style: dashed; } }
+
+.banner { margin: 12px 16px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+#notice { padding: 8px 16px 0; min-height: 0; }
+#notice:empty { display: none; }
+.empty { padding: 32px 16px; color: var(--dim); }
+.empty p + p, .empty p + button, .empty .bad + button { margin-top: 12px; }
+.empty strong { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+
+.det { padding: 24px 32px; display: flex; flex-direction: column; gap: 14px; min-width: 0; min-height: 0; overflow: auto; }
+.det > div, .det > form { display: flex; flex-direction: column; gap: 14px; }
+.back { display: none; align-self: flex-start; }
+.dh { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex-direction: row !important; }
+.dh .acts { margin-left: auto; }
+.dh h1 { font-size: 22px; font-weight: 600; overflow-wrap: anywhere; }
+.tag { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: var(--panel); color: var(--dim); }
+.unsaved { font-weight: 500; }
+.tag.need { background: rgba(245, 158, 11, .14); color: var(--amber); }
+.tag.work { background: rgba(96, 165, 250, .14); color: var(--blue); }
+.tag.err { background: rgba(248, 113, 113, .14); color: var(--red); }
+.props { display: grid; grid-template-columns: 120px minmax(0, 1fr); row-gap: 6px; color: var(--dim); }
+.props b { color: var(--ink); font-weight: 500; }
+.task { font-size: 15px; line-height: 1.55; max-width: 680px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.errbox { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--panel); overflow-wrap: anywhere; }
+pre { margin: 6px 0 0; padding: 8px; background: var(--term); border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.confirm { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; max-width: 680px; }
+
+#preview { gap: 6px !important; }
+.pv { position: relative; width: 100%; height: 300px; overflow: hidden; background: var(--term); border: 1px solid var(--line); border-radius: 8px; }
+.pv iframe { position: absolute; left: 0; top: 0; width: calc(100% / .75); height: calc(100% / .75); border: 0; transform: scale(.75); transform-origin: 0 0; background: var(--term); opacity: 0; transition: opacity .2s; }
+.pv iframe.loaded { opacity: 1; }
+.pv button { position: absolute; right: 10px; top: 10px; background: var(--panel); }
+.pv button:hover:not(:disabled) { background: var(--line); }
+.pvnote { border: 1px dashed var(--line); border-radius: 8px; padding: 24px 16px; color: var(--dim); text-align: center; }
+
+#overlay { position: fixed; inset: 0; z-index: 10; background: var(--bg); display: flex; flex-direction: column; }
+#overlay header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); min-height: 48px; }
+#overlay header b { font-weight: 600; margin-right: auto; overflow-wrap: anywhere; }
+#overlay a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); text-decoration: none; font-weight: 500; }
+#overlay a:hover { background: var(--panel); }
+#overlay iframe { flex: 1; width: 100%; border: 0; background: var(--term); }
+
+@media (max-width: 899px), (pointer: coarse) {
+  button, #overlay a { min-height: 44px; }
+  button.chip { min-height: 44px; }
+  button.link { min-height: 44px; }
+  input, textarea { font-size: 16px; min-height: 44px; }
+}
+@media (max-width: 899px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); padding-top: env(safe-area-inset-top); }
+  .rail { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 16px; }
+  .brand, .rail .railfoot { display: none; }
+  #phoneFoot { display: block; }
+  .comp { margin-top: 0; border: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; }
+  .comp .acts { margin-top: 0; grid-row: 1 / span 2; grid-column: 2; }
+  .comp .ask { grid-column: 1 / -1; margin-top: 0; }
+  .comp .ask .acts { grid-row: auto; flex-direction: row; }
+  .comp button { width: auto; }
+  .comp .d { margin-top: 0; grid-column: 1; }
+  .list, .det { grid-row: 2; grid-column: 1; border-right: 0; }
+  .app[data-screen=list] .det { display: none; }
+  .app[data-screen=detail] .list { display: none; }
+  .back { display: inline-flex; align-items: center; }
+  .det { padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .props { grid-template-columns: 90px minmax(0, 1fr); }
+  .pv { height: 220px; }
+  .pv button { right: 6px; top: 6px; }
+}
 </style>
 </head>
 <body>
-<main>
-  <section id="login" hidden>
-    <p class="big" style="font-size:26px">Chimera</p>
-    <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" enterkeyhint="go">
-    <p id="loginNote" class="bad" role="alert"></p>
-    <button id="loginGo" class="primary">Enter</button>
+<section id="login" hidden>
+  <h1>Chimera</h1>
+  <label for="password">Password</label>
+  <input id="password" type="password" autocomplete="current-password" enterkeyhint="go">
+  <p id="loginNote" class="bad" role="alert"></p>
+  <button id="loginGo" class="primary">Enter</button>
+</section>
+
+<div id="app" class="app" data-screen="list" hidden>
+  <aside class="rail" aria-label="Computer">
+    <div class="brand"><i></i>Chimera</div>
+    <div id="comp" class="comp"></div>
+    <div class="railfoot"><button class="link" data-forget>Forget password</button></div>
+  </aside>
+
+  <section class="list" aria-label="Containers">
+    <div id="lh" class="lh"></div>
+    <div id="scroll" class="scroll">
+      <div id="notices" aria-live="polite"><div id="stale"></div><p id="notice" class="dim"></p></div>
+      <div id="rows"></div>
+      <div class="railfoot" id="phoneFoot"><button class="link" data-forget>Forget password</button></div>
+    </div>
   </section>
 
-  <div id="app" hidden>
-    <h2>Computer</h2>
-    <section id="computer"></section>
-    <p id="notice" class="dim" role="status"></p>
-
-    <h2>Containers</h2>
-    <div id="containers"></div>
-
-    <h2>New task</h2>
-    <section>
-      <form id="newTask" autocomplete="off">
+  <section class="det" id="det" aria-label="Details">
+    <button id="back" class="back" data-k="back">Back</button>
+    <div id="detailTop"></div>
+    <form id="newTask" autocomplete="off" hidden>
+      <h1>New task</h1>
+      <div>
         <label for="repo">Repo (OWNER/REPO)</label>
         <input id="repo" required pattern="[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+" autocapitalize="none" autocorrect="off" spellcheck="false">
         <label for="cname">Name</label>
-        <input id="cname" required pattern="(?!base$)[a-z][a-z0-9\-]{0,62}" autocapitalize="none" autocorrect="off" spellcheck="false" title="Lowercase letters, digits and dashes. Starts with a letter. Not &quot;base&quot;.">
+        <input id="cname" required pattern="(?!base$)[a-z][a-z0-9\-]{0,62}" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="nameHelp" title="Lowercase letters, digits and dashes. Starts with a letter. Not &quot;base&quot;.">
+        <p id="nameHelp" class="help">Lowercase letters, digits and dashes. Starts with a letter. Not &ldquo;base&rdquo;.</p>
         <label for="task">Task</label>
         <textarea id="task" maxlength="2000" required></textarea>
-        <div class="actions"><button class="primary" type="submit">Start</button></div>
-        <p id="formNote" class="bad" role="alert"></p>
-      </form>
-    </section>
-    <button id="forget" class="link">Forget password</button>
-  </div>
-</main>
+      </div>
+      <div class="acts"><button id="startTask" class="primary" type="submit">Start task</button><button type="button" id="cancelNew">Cancel</button></div>
+      <p id="formNote" class="bad" role="alert"></p>
+    </form>
+    <div id="preview" hidden>
+      <div class="pv" id="pv"><iframe id="pvFrame" title="Claude's screen, view only" tabindex="-1"></iframe><button id="fs" data-k="fs">Full screen</button></div>
+      <p class="help">View only, around Claude's cursor. Full screen shows everything and lets you type. Needs this device on Tailscale.</p>
+    </div>
+    <p id="pvNote" class="pvnote" hidden></p>
+    <div id="detailBottom"></div>
+  </section>
+</div>
+
+<div id="overlay" hidden role="dialog" aria-modal="true" aria-label="Claude full screen">
+  <header><b id="ovName"></b><a id="ovOpen" target="_blank" rel="noopener">Open in new tab</a><button id="ovClose">Close</button></header>
+  <iframe id="ovFrame" title="Claude, full screen"></iframe>
+</div>
+
 <script>
 const keys = { password: "chimera.password", repo: "chimera.repo" };
 const pollMs = 10000;
-const taskPreview = 140;
-const watchUrl = (name) => `https://chimera.tailed8053.ts.net:8443/?arg=${encodeURIComponent(name)}`;
+const watchBase = "https://chimera.tailed8053.ts.net:8443/";
+const watchUrl = (name, view = false) => `${watchBase}?arg=${encodeURIComponent(name)}${view ? "&arg=view" : ""}`;
+const phone = matchMedia("(max-width: 899px)");
 
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -94,32 +232,38 @@ const store = {
 };
 
 const $ = (id) => document.getElementById(id);
-const h = (tag, props = {}, ...kids) => {
+const h = (tag, { k, ...props } = {}, ...kids) => {
   const el = Object.assign(document.createElement(tag), props);
+  if (k) el.dataset.k = k;
   el.append(...kids.flat().filter((kid) => kid != null && kid !== false));
   return el;
 };
 
-const progressWord = {
-  running: (w) => (w.state === null ? "creating…" : "starting…"),
-  stopped: () => "stopping…",
-  gone: () => "deleting…",
-};
-const containerButtons = {
-  running: ["stop", "rm"],
-  stopped: ["start", "rm"],
-};
-const buttonLabel = { start: "Start", stop: "Stop", rm: "Delete" };
-const computerButtons = { asleep: ["wake"], awake: ["sleep"] };
-
 const isPending = (w) => w.rev !== null && w.rev !== w.doneRev;
 const lostWork = (w) => (w.work ? [...w.work.unpushed, ...w.work.uncommitted] : []);
+const firstLine = (text) => text.split("\n").find((line) => line.trim()) ?? "";
+const plus = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 1v10M1 6h10"/></svg>';
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-function statusLabel(w) {
-  if (isPending(w) && !w.error) return h("span", { className: "dim" }, progressWord[w.want]?.(w) ?? w.state);
-  if (w.error) return h("span", { className: "bad" }, w.error);
-  return h("span", { className: "dim" }, w.state ?? "");
-}
+// First match wins, so a waiting agent outranks a pending or errored row.
+const groups = [
+  { key: "need", label: "Needs you", test: (w) => w.agent === "waiting" },
+  { key: "work", label: "Working", test: (w) => w.agent === "working" },
+  { key: "busy", label: "In progress", test: (w) => isPending(w) && !w.error },
+  { key: "err", label: "Errored", test: (w) => Boolean(w.error) },
+  { key: "run", label: "Running", test: (w) => w.state === "running" },
+  { key: "stop", label: "Stopped", test: () => true },
+];
+
+const progressWord = {
+  running: (w) => (w.state === null ? "Creating…" : "Starting…"),
+  stopped: () => "Stopping…",
+  gone: () => "Deleting…",
+};
+const progressOf = (w) => progressWord[w.want]?.(w) ?? "Working on it…";
+const containerButtons = { running: ["stop", "rm"], stopped: ["start", "rm"] };
+const buttonLabel = { start: "Start", stop: "Stop", rm: "Delete" };
+const retryAction = (w) => ({ gone: "rm", stopped: "stop" })[w.want] ?? "start";
 
 function age(seconds) {
   if (seconds === null || seconds === undefined) return "no report yet";
@@ -128,87 +272,207 @@ function age(seconds) {
   return `${Math.round(seconds / 3600)} h ago`;
 }
 
-const ui = { expanded: new Set(), deleting: null, handlers: {} };
-
-function workLine(w) {
-  if (!w.work) return null;
-  const { unpushed, uncommitted, error } = w.work;
-  const parts = [
-    unpushed.length > 0 && `${unpushed.length} unpushed commit${unpushed.length === 1 ? "" : "s"}`,
-    uncommitted.length > 0 && `${uncommitted.length} uncommitted file${uncommitted.length === 1 ? "" : "s"}`,
+function workParts(w) {
+  if (!w.work) return [];
+  const { unpushed, uncommitted } = w.work;
+  return [
+    unpushed.length > 0 && `${plural(unpushed.length, "unpushed commit")}`,
+    uncommitted.length > 0 && `${plural(uncommitted.length, "uncommitted file")}`,
   ].filter(Boolean);
-  if (parts.length === 0 && !error) return null;
-  return h("p", { className: "warn" }, parts.join(", "), error && h("span", { className: "dim" }, `${parts.length ? " · " : ""}couldn't check everything`));
 }
 
-function taskBlock(w) {
-  if (!w.task) return null;
-  const long = w.task.length > taskPreview;
-  const open = ui.expanded.has(w.name);
-  const shown = long && !open ? `${w.task.slice(0, taskPreview)}…` : w.task;
-  return h("p", {
-    className: "task",
-    onclick: () => { ui.expanded.has(w.name) ? ui.expanded.delete(w.name) : ui.expanded.add(w.name); ui.handlers.redraw(); },
-  }, shown);
+// ui is everything the person chose; last/lastText/failure are what the server told us.
+const ui = { selected: null, deleting: null, confirmSleep: false, fullscreen: null, screen: "list" };
+let last = null, lastText = "", lastOk = 0, failure = null, pendingFocus = null, shownPreview = null, posting = false;
+
+function layout(s) {
+  const shown = groups.map((group) => ({ ...group, items: [] }));
+  for (const w of s.workspaces) shown.find((group) => group.test(w, s)).items.push(w);
+  const filled = shown.filter((group) => group.items.length > 0);
+  const first = filled[0]?.items[0]?.name ?? null;
+  const selected = ui.selected === "new" ? "new" : s.workspaces.find((w) => w.name === ui.selected)?.name ?? first;
+  const groupOf = new Map(filled.flatMap((group) => group.items.map((w) => [w.name, group])));
+  return { filled, selected, groupOf };
+}
+
+function choose(selected, focus) {
+  Object.assign(ui, { selected, deleting: null, screen: "detail" });
+  pendingFocus = focus ?? null;
+  draw();
+}
+
+function rowButton(w, group, selected) {
+  const parts = workParts(w);
+  return h("button", { className: "row", k: `row:${w.name}`, ariaCurrent: w.name === selected ? "true" : "false", onclick: () => choose(w.name, `row:${w.name}`) },
+    h("i", { className: `dot ${group.key}` }),
+    h("span", {},
+      h("span", { className: "n" }, w.name),
+      w.task && h("span", { className: "l" }, firstLine(w.task)),
+      parts.length > 0 && h("span", { className: "l unsaved" }, parts.join(" · "))),
+    isPending(w) && !w.error ? h("span", { className: "t" }, progressOf(w)) : null);
+}
+
+function renderList(vm) {
+  const fresh = !last;
+  $("lh").replaceChildren(
+    h(phone.matches && ui.screen === "list" ? "h1" : "h2", {}, "Containers"),
+    h("button", { className: "chip", k: "new", innerHTML: plus, onclick: () => choose("new", null) }, "New task"));
+  $("stale").replaceChildren(...(failure && last ? [h("p", { className: "banner" },
+    h("span", {}, `Couldn't refresh. Showing what we knew ${age(Math.round((Date.now() - lastOk) / 1000))}. `), h("span", { className: "bad" }, failure))] : []));
+  if (fresh) {
+    $("rows").replaceChildren(failure
+      ? h("div", { className: "empty" }, h("p", { className: "bad" }, `Couldn't load. ${failure}`), h("button", { k: "retry-load", onclick: refresh }, "Try again"))
+      : h("div", { className: "empty" }, "Loading…"));
+  } else if (last.workspaces.length === 0) {
+    $("rows").replaceChildren(h("div", { className: "empty" },
+      h("p", {}, h("strong", {}, "No containers yet"), "Each task gets its own container, with Claude working in it."),
+      h("button", { className: "primary", k: "new-empty", innerHTML: plus, onclick: () => choose("new", null) }, "New task")));
+  } else {
+    $("rows").replaceChildren(...vm.filled.flatMap((group) => [
+      h("div", { className: "grp" }, `${group.label} · ${group.items.length}`),
+      ...group.items.map((w) => rowButton(w, group, vm.selected)),
+    ]));
+  }
+}
+
+function sleepNames(s) {
+  const names = s.workspaces.filter((w) => w.agent).map((w) => w.name);
+  return names.length > 0 ? `in ${names.join(", ")}` : "";
+}
+
+function renderRail(s) {
+  if (!s) return $("comp").replaceChildren(h("div", { className: "s" }, failure ? "Computer unknown" : "Checking the computer…"));
+  const word = { asleep: "Asleep", waking: "Waking", awake: "Awake", "going-to-sleep": "Going to sleep" }[s.state] ?? s.state ?? "Unknown";
+  const dot = { awake: "awake", waking: "busy", "going-to-sleep": "busy" }[s.state] ?? "";
+  const woke = s.state === "awake" && s.server?.created ? new Date(s.server.created) : null;
+  const asking = ui.confirmSleep && s.busy && s.state === "awake";
+  $("comp").replaceChildren(
+    h("div", { className: "s" }, h("i", { className: `dot ${dot}` }), word),
+    h("div", { className: "d" },
+      s.state === "waking" && h("div", {}, "Usually about 40 seconds."),
+      s.state === "going-to-sleep" && h("div", {}, "Backing up your files first."),
+      h("div", {}, `Last report ${age(s.reportAgeSeconds)}`),
+      woke && !isNaN(woke) && h("div", {}, `Woke ${woke.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`)),
+    asking
+      ? h("div", { className: "ask" },
+          h("p", { className: "unsaved" }, `${["Claude is working", sleepNames(s)].filter(Boolean).join(" ")}. Sleep anyway? Your files are kept and backed up.`),
+          h("div", { className: "acts" },
+            h("button", { k: "sleep-keep", onclick: () => { ui.confirmSleep = false; pendingFocus = "sleep"; draw(); } }, "Stay awake"),
+            h("button", { className: "danger", k: "sleep-go", onclick: () => sleep(s, true) }, "Sleep anyway")))
+      : h("div", { className: "acts" },
+          s.state === "asleep" && h("button", { className: "primary", k: "wake", onclick: wake }, "Wake"),
+          s.state === "awake" && h("button", { k: "sleep", onclick: () => sleep(s, false) }, "Sleep")));
 }
 
 function deleteConfirm(w) {
   const lost = lostWork(w);
-  return h("div", {},
+  return h("div", { className: "confirm", role: "group", ariaLabel: `Delete ${w.name}` },
     lost.length > 0
-      ? [h("p", { className: "bad" }, "Deleting this loses work that isn't pushed:"), h("pre", {}, lost.join("\n"))]
+      ? h("div", {}, h("p", { className: "bad" }, "Deleting this loses work that isn't pushed:"), h("pre", {}, lost.join("\n")))
       : h("p", {}, `Delete ${w.name}?`),
-    h("div", { className: "actions" },
-      h("button", { className: "danger", onclick: () => ui.handlers.remove(w, lost.length > 0) }, lost.length > 0 ? "Delete and lose it" : "Delete"),
-      h("button", { onclick: () => { ui.deleting = null; ui.handlers.redraw(); } }, "Keep")));
+    h("div", { className: "acts" },
+      h("button", { k: "keep", onclick: () => { ui.deleting = null; pendingFocus = "act:rm"; draw(); } }, "Keep"),
+      h("button", { className: "danger-fill", k: "delete-go", onclick: () => remove(w, lost.length > 0) }, lost.length > 0 ? "Delete and lose it" : "Delete")));
 }
 
-function card(w, s) {
-  const watch = s.state === "awake" && w.state === "running" && w.task
-    && h("a", { className: "button", href: watchUrl(w.name), target: "_blank", rel: "noopener" }, "Watch Claude");
-  const buttons = isPending(w) && !w.error ? [] : containerButtons[w.state] ?? [];
-  const link = w.repo && w.branch && h("a", { href: `https://github.com/${w.repo}/tree/${w.branch}`, target: "_blank", rel: "noopener" }, `${w.repo} @ ${w.branch}`);
-  return h("div", { className: "card" },
-    h("div", { className: "row" }, h("span", { className: "name" }, w.name), w.agent && h("span", { className: "badge" }, w.agent)),
-    h("div", {}, statusLabel(w)),
-    taskBlock(w),
-    link && h("p", { className: "dim" }, link),
-    workLine(w),
-    ui.deleting === w.name
-      ? deleteConfirm(w)
-      : h("div", { className: "actions" }, watch, buttons.map((action) =>
-          h("button", { className: action === "rm" ? "danger" : "", onclick: () => ui.handlers.act(action, w) }, buttonLabel[action]))));
+function previewBlock(w, s) {
+  if (s.state === "asleep") return "The computer is asleep. Wake it to see Claude.";
+  if (s.state !== "awake") return "The computer isn't awake yet. Claude's screen shows up once it is.";
+  if (isPending(w) && !w.error) return "This container is changing. Claude's screen shows up once it's done.";
+  if (w.state !== "running") return "This container is stopped. Start it to see Claude.";
+  if (!w.task) return "This container has no task, so there's no Claude to watch.";
+  return null;
 }
 
-function computerCard(s) {
-  const buttons = computerButtons[s.state] ?? [];
-  return [
-    h("p", { className: "big" }, s.state ?? "unknown"),
-    s.busy && h("p", { className: "warn" }, "Claude is working"),
-    h("p", { className: "dim" }, `Last report ${age(s.reportAgeSeconds)}`),
-    h("div", { className: "actions" }, buttons.map((action) =>
-      h("button", { className: action === "wake" ? "primary" : "", onclick: () => ui.handlers[action](s) }, action === "wake" ? "Wake" : "Sleep"))),
-  ];
+function renderPreview(w, s) {
+  const reason = w ? previewBlock(w, s) : null;
+  const name = w && !reason ? w.name : null;
+  $("preview").hidden = !name;
+  $("pvNote").hidden = !w || Boolean(name);
+  $("pvNote").textContent = reason ?? "";
+  // Reuse the same iframe while the container stays previewable; the poll must never reload it.
+  if (name !== shownPreview) {
+    shownPreview = name;
+    $("pvFrame").classList.remove("loaded");
+    if (name) $("pvFrame").src = watchUrl(name, true); else $("pvFrame").removeAttribute("src");
+  }
 }
 
-function render(s) {
-  return {
-    computer: computerCard(s),
-    containers: s.workspaces.length > 0
-      ? s.workspaces.map((w) => card(w, s))
-      : [h("p", { className: "dim" }, "No containers.")],
-  };
+function renderDetail(s, vm) {
+  const isNew = vm?.selected === "new";
+  const w = s && !isNew ? s.workspaces.find((x) => x.name === vm.selected) : null;
+  $("newTask").hidden = !isNew;
+  if (!w) {
+    $("detailTop").replaceChildren(...(isNew || !s ? [] : [h("p", { className: "dim" }, "Pick a container, or start a new task.")]));
+    $("detailBottom").replaceChildren();
+    return renderPreview(null, s);
+  }
+  const group = vm.groupOf.get(w.name);
+  const parts = workParts(w);
+  const pending = isPending(w) && !w.error;
+  const buttons = pending ? [] : containerButtons[w.state] ?? [];
+  const deleting = ui.deleting === w.name && !pending;
+  const answerable = w.agent === "waiting" && !previewBlock(w, s);
+  $("fs").hidden = answerable;
+  const actions = deleting ? null : h("div", { className: "acts" },
+    answerable && h("button", { className: "primary", k: "answer", onclick: () => openFull(w.name) }, "Answer Claude"),
+    w.error && h("button", { className: "primary", k: "retry", onclick: () => order(retryAction(w), w) }, "Retry"),
+    buttons.map((action) => h("button", { className: action === "rm" ? "danger" : "", k: `act:${action}`, onclick: () => runAction(action, w) }, buttonLabel[action])));
+  $("detailTop").replaceChildren(...[
+    h("div", { className: "dh" }, h("h1", {}, w.name), h("span", { className: `tag ${group.key}` }, group.label), actions),
+    w.repo && h("div", { className: "props" },
+      h("span", {}, "Repo"),
+      h("b", {}, h("a", { href: `https://github.com/${w.repo}`, target: "_blank", rel: "noopener" }, w.repo)),
+      w.branch && h("span", {}, "Branch"),
+      w.branch && h("b", {}, h("a", { href: `https://github.com/${w.repo}/tree/${w.branch}`, target: "_blank", rel: "noopener" }, w.branch))),
+    w.task && h("p", { className: "task" }, w.task),
+    pending && h("p", { className: "dim" }, progressOf(w)),
+    w.error && h("p", { className: "errbox bad", role: "alert" }, w.error),
+    (parts.length > 0 || w.work?.error) && h("p", { className: "unsaved" },
+      parts.length > 0 ? `${parts.join(", ")} not on GitHub` : "",
+      w.work.error && h("span", { className: "dim" }, `${parts.length ? " · " : ""}couldn't check everything`),
+      w.work.checkAgeSeconds != null && h("span", { className: "dim" }, ` · checked ${age(w.work.checkAgeSeconds)}`)),
+  ].filter(Boolean));
+  renderPreview(w, s);
+  $("detailBottom").replaceChildren(...(deleting ? [deleteConfirm(w)] : []));
 }
 
-const show = (id, kids) => $(id).replaceChildren(h("div", {}, kids));
-let last = null;
 function draw() {
-  if (!last) return;
-  const view = render(last);
-  show("computer", view.computer);
-  show("containers", view.containers);
+  if ($("app").hidden) return;
+  const focus = pendingFocus ?? document.activeElement?.dataset?.k ?? null;
+  pendingFocus = null;
+  const scroll = $("scroll").scrollTop, detailScroll = $("det").scrollTop;
+  const vm = last ? layout(last) : null;
+  const waiting = last ? last.workspaces.filter((w) => w.agent === "waiting").length : 0;
+  document.title = waiting > 0 ? `(${waiting}) Chimera` : "Chimera";
+  $("app").dataset.screen = ui.screen;
+  $("app").inert = ui.fullscreen !== null;
+  renderRail(last);
+  renderList(vm);
+  renderDetail(last, vm);
+  $("scroll").scrollTop = scroll;
+  $("det").scrollTop = detailScroll;
+  if (focus) document.querySelector(`[data-k="${CSS.escape(focus)}"]:not([hidden])`)?.focus({ preventScroll: true });
 }
-ui.handlers.redraw = draw;
+
+function openFull(name) {
+  ui.fullscreen = name;
+  $("ovName").textContent = name;
+  $("ovOpen").href = watchUrl(name);
+  $("ovFrame").src = watchUrl(name);
+  $("overlay").hidden = false;
+  $("app").inert = true;
+  $("ovClose").focus();
+}
+
+function closeFull() {
+  ui.fullscreen = null;
+  $("overlay").hidden = true;
+  $("ovFrame").removeAttribute("src");
+  $("app").inert = false;
+  pendingFocus = $("fs").hidden ? "answer" : "fs";
+  draw();
+}
 
 let timer = null;
 const note = (text, bad = false) => { $("notice").textContent = text; $("notice").className = bad ? "bad" : "dim"; };
@@ -217,7 +481,9 @@ function showLogin(message = "") {
   store.clear(keys.password);
   clearInterval(timer);
   timer = null;
-  last = null;
+  last = null; lastText = ""; failure = null; shownPreview = null;
+  if (ui.fullscreen !== null) closeFull();
+  $("pvFrame").removeAttribute("src");
   $("app").hidden = true;
   $("login").hidden = false;
   $("loginNote").textContent = message;
@@ -245,11 +511,18 @@ async function api(method, path, body, type = "application/json") {
 
 async function refresh() {
   try {
-    last = JSON.parse(await api("GET", "/state"));
-    draw();
+    const text = await api("GET", "/state");
+    const changed = text !== lastText || failure !== null;
+    last = JSON.parse(text);
+    lastText = text;
+    lastOk = Date.now();
+    failure = null;
     if ($("notice").className === "bad") note("");
+    if (changed) draw();
   } catch (error) {
-    if (!$("app").hidden) note(error.message, true);
+    if ($("app").hidden) return;
+    failure = error.message;
+    draw();
   }
 }
 
@@ -264,43 +537,65 @@ async function act(label, request) {
   await refresh();
 }
 
-const sendOrder = (order) => api("POST", "/orders", order).then(() => "");
+const sendOrder = (body) => api("POST", "/orders", body).then(() => "");
+const order = (action, w, extra) => act("", () => sendOrder({ action, name: w.name, ...extra }));
+const wake = () => act("Waking…", () => api("POST", "/wake"));
 
-Object.assign(ui.handlers, {
-  wake: () => act("Waking…", () => api("POST", "/wake")),
-  sleep: (s) => {
-    if (s.busy && !confirm("Claude is still working. Sleep anyway?")) return;
-    return act("Going to sleep…", () => api("POST", "/want", "asleep", "text/plain").then(() => ""));
-  },
-  act(action, w) {
-    if (action === "rm") { ui.deleting = w.name; return draw(); }
-    return act("", () => sendOrder({ action, name: w.name }));
-  },
-  remove(w, force) {
-    ui.deleting = null;
-    return act("", () => sendOrder({ action: "rm", name: w.name, ...(force && { force: true }) }));
-  },
-});
+function sleep(s, confirmed) {
+  if (s.busy && !confirmed) { ui.confirmSleep = true; pendingFocus = "sleep-keep"; return draw(); }
+  ui.confirmSleep = false;
+  draw();
+  return act("Going to sleep…", () => api("POST", "/want", "asleep", "text/plain").then(() => ""));
+}
+
+function runAction(action, w) {
+  if (action === "rm") { ui.deleting = w.name; pendingFocus = "keep"; return draw(); }
+  return order(action, w);
+}
+
+function remove(w, force) {
+  ui.deleting = null;
+  pendingFocus = null;
+  return order("rm", w, force ? { force: true } : undefined);
+}
 
 $("newTask").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const order = { action: "new", name: $("cname").value.trim(), repo: $("repo").value.trim(), task: $("task").value };
+  if (posting) return;
+  const body = { action: "new", name: $("cname").value.trim(), repo: $("repo").value.trim(), task: $("task").value };
   $("formNote").textContent = "";
+  posting = true;
+  $("startTask").disabled = true;
   try {
-    await sendOrder(order);
-    store.set(keys.repo, order.repo);
+    await sendOrder(body);
+    store.set(keys.repo, body.repo);
     $("cname").value = "";
     $("task").value = "";
+    Object.assign(ui, { selected: body.name, deleting: null, screen: "detail" });
+    pendingFocus = null;
     await refresh();
+    draw();
   } catch (error) {
     $("formNote").textContent = error.message;
+  } finally {
+    posting = false;
+    $("startTask").disabled = false;
   }
 });
+
+$("cancelNew").addEventListener("click", () => { ui.selected = null; ui.screen = phone.matches ? "list" : "detail"; draw(); });
+$("back").addEventListener("click", () => { ui.screen = "list"; pendingFocus = ui.selected ? `row:${ui.selected}` : "new"; draw(); });
+$("fs").addEventListener("click", () => { const name = shownPreview; if (name) openFull(name); });
+$("ovClose").addEventListener("click", closeFull);
+document.querySelectorAll("[data-forget]").forEach((el) => el.addEventListener("click", () => showLogin()));
+$("pvFrame").addEventListener("load", () => { if (shownPreview) $("pvFrame").classList.add("loaded"); });
+phone.addEventListener("change", draw);
 
 function start() {
   $("login").hidden = true;
   $("app").hidden = false;
   $("repo").value ||= store.get(keys.repo) ?? "";
+  draw();
   refresh();
   clearInterval(timer);
   timer = setInterval(refresh, pollMs);
@@ -315,10 +610,11 @@ function enter() {
 
 $("loginGo").addEventListener("click", enter);
 $("password").addEventListener("keydown", (event) => { if (event.key === "Enter") enter(); });
-$("forget").addEventListener("click", () => showLogin());
 document.addEventListener("visibilitychange", () => {
   if ($("app").hidden) return;
-  if (document.hidden) { clearInterval(timer); timer = null; } else { refresh(); timer = setInterval(refresh, pollMs); }
+  clearInterval(timer);
+  timer = null;
+  if (!document.hidden) { refresh(); timer = setInterval(refresh, pollMs); }
 });
 
 store.get(keys.password) ? start() : showLogin();
