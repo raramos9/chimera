@@ -191,7 +191,9 @@ The page stops working when the computer sleeps, and opening it doesn't wake the
 
 The Worker also speaks MCP at `/mcp`, so Claude Code on the laptop can list containers, make and fork them, start and stop them, delete them, and read their results, all by itself. It uses its own password, so the wake password and the computer's password don't open it.
 
-Claude can't force a delete: if a container has work that isn't on GitHub, the delete is refused and only you can force it. It can't put the computer to sleep, restore backups or build images, and it can't make a fourth container while three exist. Its orders wake the computer like any other, and finish on their own a little later.
+Claude can't force a delete: if a container has work that isn't on GitHub, the delete is refused and only you can force it. It can't restore backups or build images, and it can't make a fourth container while three exist. Its orders wake the computer like any other, and finish on their own a little later.
+
+Claude can put the computer to sleep with `sleep_computer`, but only when nobody and nothing is using it. The computer reports whether someone is logged in over SSH, has the Watch page open, or has left `~/.keep-awake` in place, and the tool refuses if so. It also refuses while an agent is working, an `awake` command holds the computer, an order is in flight, or the last report is more than 5 minutes old. If it's safe, the computer goes down the normal way and backs up first.
 
 When an order from Claude makes a new container, Claude can ask for a medium or large computer, and has to say why. It's told to start small and size up only on evidence, like a container hitting its memory cap. A size only applies when the order wakes the computer. If it's already awake, Claude is told the size applies at the next wake.
 

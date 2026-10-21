@@ -246,7 +246,7 @@ const validWorkspace = (w) =>
 const isRev = (value) => Number.isInteger(value) && value >= 0;
 const validOutcome = (o) => Boolean(o && isText(o.name) && isRev(o.rev) && isTextOrNull(o.error));
 const validReport = (body) =>
-  Boolean(body && typeof body.busy === "boolean" && Array.isArray(body.workspaces) && body.workspaces.every(validWorkspace)
+  Boolean(body && typeof body.busy === "boolean" && (body.people === undefined || typeof body.people === "boolean") && Array.isArray(body.workspaces) && body.workspaces.every(validWorkspace)
     && (body.outcomes === undefined || (Array.isArray(body.outcomes) && body.outcomes.every(validOutcome)))
     && (body.seenRev === undefined || isRev(body.seenRev)));
 
@@ -355,6 +355,7 @@ function buildState(server, { computer, workspaces, orders, results, trips }, no
     want: computer.want,
     wantAgeSeconds: ageSeconds(computer.wantAt, now),
     busy: computer.busy,
+    people: computer.people ?? null,
     reportAgeSeconds: ageSeconds(computer.reportedAt, now),
     workspaces: withOrders(workspaces, orders, results).map((w) =>
       w.work ? { ...w, work: { ...w.work, checkAgeSeconds: ageSeconds(w.work.checkedAt, now) } } : w),
@@ -364,18 +365,18 @@ function buildState(server, { computer, workspaces, orders, results, trips }, no
 export class Records extends DurableObject {
   async computer() {
     return (await this.ctx.storage.get("computer"))
-      ?? { want: null, wantAt: null, busy: null, reportedAt: null };
+      ?? { want: null, wantAt: null, busy: null, people: null, reportedAt: null };
   }
 
   async stored(key, empty) {
     return (await this.ctx.storage.get(key)) ?? empty;
   }
 
-  async report({ busy, workspaces, outcomes = [], seenRev }) {
+  async report({ busy, people = null, workspaces, outcomes = [], seenRev }) {
     const now = new Date().toISOString();
     const previous = await this.stored("workspaces", []);
     await this.ctx.storage.put("workspaces", mergeWorkspaces(workspaces, previous, now));
-    await this.ctx.storage.put("computer", { ...(await this.computer()), busy, reportedAt: now });
+    await this.ctx.storage.put("computer", { ...(await this.computer()), busy, people, reportedAt: now });
     if (outcomes.length > 0) await this.settle(outcomes, now);
     if (seenRev !== undefined && (await this.stored("rev", 0)) > seenRev) this.nudge();
   }
@@ -591,12 +592,15 @@ async function report(request, env) {
 async function want(request, env) {
   const requested = (await request.text()).trim();
   if (requested !== "awake" && requested !== "asleep") return text("Say awake or asleep.", 400);
-  await records(env).setWant(requested);
-  if (requested === "asleep") {
-    const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
-    if (servers[0]?.status === "running") await hetzner(env, ...sweepRequests.shutdown(servers[0].id));
-  }
+  if (requested === "asleep") await sleepServer(env);
+  else await records(env).setWant(requested);
   return new Response(null, { status: 204 });
+}
+
+async function sleepServer(env) {
+  await records(env).setWant("asleep");
+  const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
+  if (servers[0]?.status === "running") await hetzner(env, ...sweepRequests.shutdown(servers[0].id));
 }
 
 async function readState(env) {
@@ -610,6 +614,8 @@ async function state(request, env) {
   return json(await readState(env));
 }
 
+const staleReportSeconds = 5 * 60;
+const alreadyAsleep = { asleep: "Already asleep.", "going-to-sleep": "Already going to sleep." };
 const claudeLimits = { maxContainers: 3 };
 const badOrderForClaude = "That isn't a valid order. Names are lowercase letters, digits and dashes; repo is OWNER/REPO.";
 const refusalsForClaude = { 400: badOrderForClaude };
@@ -717,6 +723,31 @@ const tools = {
     "Deletes the container called name. It refuses when the container has unpushed or uncommitted work, and only the human can force it.",
     nameOnly,
     { destructiveHint: true }),
+  sleep_computer: {
+    description: "Puts the computer to sleep, but only when nobody and nothing is using it. Use it after your own work is done and nothing else is running. It refuses when someone is logged in or watching, an agent or an awake command is holding the computer awake, or any container has an agent working or an order in flight. The computer also sleeps itself after 30 idle minutes, so you never have to call this. Files are backed up on the way down.",
+    inputSchema: schema({}, []),
+    annotations: { destructiveHint: false, idempotentHint: true },
+    async run(args, env) {
+      const live = await readState(env);
+      if (alreadyAsleep[live.state]) return { text: alreadyAsleep[live.state] };
+      const busyNames = (rows) => rows.map((w) => w.name).join(", ");
+      const working = live.workspaces.filter((w) => w.agent === "working");
+      const ordered = live.workspaces.filter((w) => w.want && w.doneRev !== w.rev);
+      const refusal = [
+        [live.state === "waking", "It's still waking up."],
+        [live.state === "unknown", "The computer is in an unusual state. Try again in a minute."],
+        [live.reportAgeSeconds === null || live.reportAgeSeconds > staleReportSeconds, "The computer hasn't reported recently, so I can't tell whether it's in use. It sleeps itself after 30 idle minutes."],
+        [live.busy, "An agent or an awake command is holding it awake."],
+        [live.people === null, "This computer doesn't report logins yet (it woke before that was added), so I can't tell whether someone is using it. It sleeps itself after 30 idle minutes."],
+        [live.people, "Someone is logged in or watching."],
+        [working.length > 0, `An agent is working in ${busyNames(working)}.`],
+        [ordered.length > 0, `An order is still running for ${busyNames(ordered)}.`],
+      ].find(([refused]) => refused);
+      if (refusal) return { refused: refusal[1] };
+      await sleepServer(env);
+      return { text: "Going to sleep. Files are backed up on the way down." };
+    },
+  },
 };
 
 const protocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26"];

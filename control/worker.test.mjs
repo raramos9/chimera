@@ -438,6 +438,18 @@ assert.deepEqual(storage.get("workspaces")[0].work.unpushed, ["abc1234 add"]);
 assert.ok(nearNow(storage.get("workspaces")[0].work.checkedAt));
 console.log("PASS: a report is stored and stamped with the Worker's clock");
 
+storage.clear();
+assert.equal((await sendReport([])).status, 204);
+assert.equal(storage.get("computer").people, null);
+res = await call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, people: true, workspaces: [] }) });
+assert.equal(res.status, 204);
+assert.equal(storage.get("computer").people, true);
+for (const people of ["yes", 1, null]) {
+  res = await call("POST", "/report", { token: "agent", body: JSON.stringify({ busy: false, people, workspaces: [] }) });
+  assert.equal(res.status, 400, String(people));
+}
+console.log("PASS: a report's people flag is stored, null when absent, and refused unless boolean");
+
 const old = "2020-01-01T00:00:00.000Z";
 storage.set("workspaces", [
   workspace("a", { work: { unpushed: ["abc1234 add"], uncommitted: [], error: null, checkedAt: old } }),
@@ -870,7 +882,7 @@ console.log("PASS: MCP notifications get 202 and no body");
 rpcRes = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" });
 const listed = rpcRes.body.result.tools;
 assert.deepEqual(listed.map((t) => t.name).sort(),
-  ["container_results", "delete_container", "fork_container", "list_containers", "new_container", "start_container", "stop_container"]);
+  ["container_results", "delete_container", "fork_container", "list_containers", "new_container", "sleep_computer", "start_container", "stop_container"]);
 for (const t of listed) {
   assert.equal(t.inputSchema.additionalProperties, false, t.name);
   assert.equal(t.inputSchema.type, "object", t.name);
@@ -883,6 +895,8 @@ assert.deepEqual(toolByName.fork_container.inputSchema.required, ["from", "name"
 assert.equal(toolByName.list_containers.annotations.readOnlyHint, true);
 assert.equal(toolByName.container_results.annotations.readOnlyHint, true);
 assert.equal(toolByName.delete_container.annotations.destructiveHint, true);
+assert.deepEqual(toolByName.sleep_computer.annotations, { destructiveHint: false, idempotentHint: true });
+assert.deepEqual(toolByName.sleep_computer.inputSchema.required, []);
 assert.match(toolByName.delete_container.description, /unpushed or uncommitted work/);
 assert.match(toolByName.delete_container.description, /only the human can force/);
 console.log("PASS: MCP tools/list is built from the tool table and every schema is closed");
@@ -930,6 +944,49 @@ toolRes = (await tool("container_results", { name: "ghost" })).result;
 assert.deepEqual([toolRes.isError, toolRes.content[0].text], [true, "There's no container called ghost."]);
 assert.equal(calls.length, 0);
 console.log("PASS: container_results gives one row with a compare link, refuses unknown names and never calls Hetzner");
+
+const sleepCalls = () => posts().map((c) => c.url);
+const sleepTool = async (servers, computer, workspaces = [], orders = {}) => {
+  resetRecords(workspaces);
+  storage.set("orders", orders);
+  storage.set("computer", { want: "awake", wantAt: null, busy: false, people: false, reportedAt: secondsAgo(60), ...computer });
+  list = () => new Response(JSON.stringify({ servers }));
+  calls.length = 0;
+  return (await tool("sleep_computer", {})).result;
+};
+const shutdownUrl = "https://api.hetzner.cloud/v1/servers/42/actions/shutdown";
+for (const [label, servers, expected] of [
+  ["no server", [], "Already asleep."],
+  ["a powered-off server", [server("off", 60)], "Already going to sleep."],
+  ["a stopping server", [server("stopping", 60)], "Already going to sleep."],
+  ["a deleting server", [server("deleting", 60)], "Already going to sleep."],
+]) {
+  const slept = await sleepTool(servers, {});
+  assert.deepEqual([slept.isError, slept.content[0].text], [false, expected], label);
+  assert.deepEqual(sleepCalls(), [], label);
+  assert.equal(storage.get("computer").want, "awake", label);
+}
+const refusals = [
+  ["still waking", { reportedAt: null }, [], "It's still waking up."],
+  ["a stale report", { reportedAt: secondsAgo(301) }, [], "The computer hasn't reported recently, so I can't tell whether it's in use. It sleeps itself after 30 idle minutes."],
+  ["busy", { busy: true }, [], "An agent or an awake command is holding it awake."],
+  ["people unknown", { people: null }, [], "This computer doesn't report logins yet (it woke before that was added), so I can't tell whether someone is using it. It sleeps itself after 30 idle minutes."],
+  ["someone on", { people: true }, [], "Someone is logged in or watching."],
+  ["an agent working", {}, [workspace("a", { agent: "working" }), workspace("b", { agent: "waiting" }), workspace("c", { agent: "working" })], "An agent is working in a, c."],
+  ["an order in flight", {}, [workspace("a")], "An order is still running for a.", { a: orderRow("a", "stop", 3) }],
+];
+for (const [label, computer, workspaces, expected, orders] of refusals) {
+  const slept = await sleepTool(runningServer, computer, workspaces, orders);
+  assert.deepEqual([slept.isError, slept.content[0].text], [true, expected], label);
+  assert.deepEqual(sleepCalls(), [], label);
+  assert.equal(storage.get("computer").want, "awake", label);
+}
+const slept = await sleepTool(runningServer, {}, [workspace("a")]);
+assert.equal(slept.isError, false);
+assert.equal(slept.content[0].text, "Going to sleep. Files are backed up on the way down.");
+assert.equal(storage.get("computer").want, "asleep");
+assert.deepEqual(sleepCalls(), [shutdownUrl]);
+console.log("PASS: sleep_computer sleeps only when idle and reported, and says why when it refuses");
 
 resetRecords();
 sockets.push(fakeSocket());

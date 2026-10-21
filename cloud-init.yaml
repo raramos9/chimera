@@ -216,10 +216,14 @@ write_files:
     }
 
     cmd_report() {
-      local dir json name rc busy=false
+      local dir json name rc ttyd busy=false people=false
       dir=$(mktemp -d)
       trap "rm -rf '$dir'" EXIT
       if ! flock -n -x /var/lib/chimera-awake/awake.lock true; then busy=true; fi
+      if [ -e /home/andre/.keep-awake ] || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null; then people=true; fi
+      for ttyd in $(pgrep -x ttyd || true); do
+        if pgrep -P "$ttyd" >/dev/null; then people=true; fi
+      done
       json=$(incus list -f json)
       for name in $(python3 "$report" names <<<"$json"); do
         rc=0
@@ -231,7 +235,7 @@ write_files:
         incus exec "$name" -- sh -c 'pgrep -x claude >/dev/null || exit 0; cat /home/andre/.config/chimera/agent 2>/dev/null || echo waiting' \
           </dev/null > "$dir/$name.agent" 2>/dev/null || true
       done
-      python3 "$report" build "$dir" "$busy" <<<"$json"
+      python3 "$report" build "$dir" "$busy" "$people" <<<"$json"
     }
 
     cmd_results() {
@@ -581,9 +585,9 @@ write_files:
     def names():
         print("\n".join(c["name"] for c in containers() if c["status"] == "Running" and meta(c, "repo")))
 
-    def build(directory, busy):
+    def build(directory, busy, people):
         workspaces = [workspace(directory, c) for c in containers()]
-        print(json.dumps({"busy": busy == "true", "workspaces": workspaces}))
+        print(json.dumps({"busy": busy == "true", "people": people == "true", "workspaces": workspaces}))
 
     def fields(*values):
         sys.stdout.write("".join(str(v).replace("\0", "") + "\0" for v in values))
