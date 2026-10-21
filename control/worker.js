@@ -11,6 +11,11 @@ const buildName = "chimera-image-build";
 const keepImages = 2;
 const primaryIpId = 154132581; // chimera-ip
 const firewallId = 11770509; // chimera-firewall
+const location = "hil";
+
+const sizes = { small: "cpx11", medium: "cpx21", large: "cpx31" };
+const sizeOf = (type) => Object.keys(sizes).find((size) => sizes[size] === type) ?? type;
+const noCapacity = /resource_unavailable|placement_error/;
 
 const wakeByStatus = {
   none: "create",
@@ -44,12 +49,40 @@ const replies = {
 const graceMinutes = 5;
 const forceOffAfterMinutes = 15;
 
-function sweepAction(status, minutes, maxAwake) {
+function sweepAction(status, minutes, { maxAwake, idleOverBudget }) {
   if (minutes < graceMinutes) return null;
   if (status === "off") return "delete";
   if (minutes >= maxAwake + forceOffAfterMinutes && status !== "deleting") return "poweroff";
-  if (minutes >= maxAwake && status === "running") return "shutdown";
+  if ((minutes >= maxAwake || idleOverBudget) && status === "running") return "shutdown";
   return null;
+}
+
+const claudeMaxAwakeMinutes = { large: 240 };
+
+function sweepLimits(env, server, { computer, trips }, maxAwake, now) {
+  const trip = trips.find((t) => t.server === server.id && t.end === null);
+  if (trip?.by !== "claude") return { maxAwake, idleOverBudget: false };
+  const idle = computer.busy === false && Date.parse(computer.reportedAt) > Date.parse(server.created);
+  return {
+    maxAwake: claudeMaxAwakeMinutes[trip.size] ?? maxAwake,
+    idleOverBudget: trip.size !== "small" && idle && claudeSpent(trips, now) > dailyBudget(env),
+  };
+}
+
+const keepTripsDays = 35;
+const pacificDay = (time) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date(time));
+const tripCost = (trip, now) =>
+  Math.max(1, Math.ceil(((trip.end ? Date.parse(trip.end) : now) - Date.parse(trip.start)) / 3600000)) * trip.pricePerHour;
+const startedToday = (trips, now) => trips.filter((t) => pacificDay(t.start) === pacificDay(now));
+const claudeSpent = (trips, now) =>
+  startedToday(trips, now).filter((t) => t.by === "claude").reduce((sum, t) => sum + tripCost(t, now), 0);
+const cents = (amount) => Math.round(amount * 100) / 100;
+const money = (amount) => `$${amount.toFixed(2)}`;
+
+function dailyBudget(env) {
+  const limit = Number(env.CLAUDE_DAILY_BUDGET);
+  if (!(limit > 0)) throw new Error(`CLAUDE_DAILY_BUDGET must be a positive number, got ${env.CLAUDE_DAILY_BUDGET}`);
+  return limit;
 }
 
 const sweepRequests = {
@@ -103,7 +136,14 @@ async function packUserData(text) {
   ].join("\n");
 }
 
-async function createServer(env) {
+async function hourlyPrice(env, type) {
+  const { server_types } = await hetzner(env, "GET", `/server_types?name=${type}`);
+  const price = server_types[0]?.prices.find((p) => p.location === location);
+  if (!price) throw new Error(`Hetzner lists no ${location} price for ${type}`);
+  return Number(price.price_hourly.gross);
+}
+
+async function createServer(env, type) {
   const volumeIds = [];
   for (const volumeName of volumeNames) {
     const { volumes } = await hetzner(env, "GET", `/volumes?name=${volumeName}`);
@@ -113,27 +153,33 @@ async function createServer(env) {
   const { images } = await hetzner(env, "GET",
     `/images?type=snapshot&status=available&label_selector=${encodeURIComponent(imageLabel)}&sort=created:desc`);
   if (images.length === 0) throw new Error(`no snapshot labeled ${imageLabel}, run 'chimera build-image'`);
-  return hetzner(env, "POST", "/servers", {
+  const body = {
     name,
-    server_type: "cpx11",
     image: images[0].id,
-    location: "hil",
+    location,
     ssh_keys: ["laptop"],
     volumes: volumeIds,
     automount: false,
     public_net: { enable_ipv4: true, enable_ipv6: true, ipv4: primaryIpId },
     firewalls: [{ firewall: firewallId }],
     user_data: await packUserData(cloudInit),
-  });
+  };
+  try {
+    return { server: (await hetzner(env, "POST", "/servers", { ...body, server_type: type })).server, type };
+  } catch (error) {
+    if (type === sizes.small || !noCapacity.test(error.message)) throw error;
+    console.log(`no ${type} free in ${location}, creating ${sizes.small} instead`);
+    return { server: (await hetzner(env, "POST", "/servers", { ...body, server_type: sizes.small })).server, type: sizes.small };
+  }
 }
 
 const buildSteps = {
   async start(env, build, images) {
     await hetzner(env, "POST", "/servers", {
       name: buildName,
-      server_type: "cpx11",
+      server_type: sizes.small,
       image: "ubuntu-24.04",
-      location: "hil",
+      location,
       ssh_keys: ["laptop"],
       firewalls: [{ firewall: firewallId }],
       user_data: imageInit,
@@ -287,7 +333,16 @@ function withOrders(workspaces, orders, results) {
   ];
 }
 
-function buildState(server, { computer, workspaces, orders, results }, now) {
+function budgetView(trips, now, limit) {
+  return {
+    spent: cents(claudeSpent(trips, now)),
+    limit,
+    today: startedToday(trips, now).map((t) =>
+      ({ by: t.by, size: t.size, reason: t.reason, start: t.start, end: t.end, cost: cents(tripCost(t, now)) })),
+  };
+}
+
+function buildState(server, { computer, workspaces, orders, results, trips }, now, limit) {
   return {
     state: computerState(server, computer.reportedAt),
     server: server && {
@@ -295,6 +350,8 @@ function buildState(server, { computer, workspaces, orders, results }, now) {
       created: server.created,
       firewalls: server.public_net?.firewalls?.length ?? 0,
     },
+    size: server ? sizeOf(server.server_type?.name) : null,
+    budget: budgetView(trips, now, limit),
     want: computer.want,
     wantAgeSeconds: ageSeconds(computer.wantAt, now),
     busy: computer.busy,
@@ -401,45 +458,119 @@ export class Records extends DurableObject {
       workspaces: await this.stored("workspaces", []),
       orders: await this.stored("orders", {}),
       results: await this.stored("results", {}),
+      trips: await this.stored("trips", []),
     };
+  }
+
+  async putTrips(trips) {
+    const keepAfter = Date.now() - keepTripsDays * 86400000;
+    await this.ctx.storage.put("trips", trips.filter((t) => t.end === null || Date.parse(t.end) >= keepAfter));
+  }
+
+  async openTrip(trip, { claim = false } = {}) {
+    const trips = await this.stored("trips", []);
+    const existing = trips.find((t) => t.server === trip.server);
+    if (existing && !claim) return;
+    // The Worker's own create can lose a race to a reconcile that saw the new server first and recorded it as "you".
+    await this.putTrips(existing
+      ? trips.map((t) => (t === existing ? { ...t, by: trip.by, reason: trip.reason } : t))
+      : [...trips, trip]);
+  }
+
+  async endTrip(server, at) {
+    const trips = await this.stored("trips", []);
+    if (!trips.some((t) => t.server === server && t.end === null)) return;
+    await this.putTrips(trips.map((t) => (t.server === server && t.end === null ? { ...t, end: at } : t)));
+  }
+
+  async endTripsExcept(server, at) {
+    const trips = await this.stored("trips", []);
+    if (trips.some((t) => t.server !== server && t.end === null)) {
+      await this.putTrips(trips.map((t) => (t.server !== server && t.end === null ? { ...t, end: at } : t)));
+    }
+    return trips.some((t) => t.server === server);
   }
 }
 
-async function wakeServer(env) {
+async function openTrip(env, { server, type, pricePerHour, by, reason }, options) {
+  await records(env).openTrip({
+    server: server.id, by, size: sizeOf(type), type, pricePerHour, reason, start: server.created ?? new Date().toISOString(), end: null,
+  }, options);
+}
+
+async function reconcileTrips(env, server) {
+  const tracked = await records(env).endTripsExcept(server?.id ?? null, new Date().toISOString());
+  if (!server || tracked) return;
+  const type = server.server_type.name;
+  await openTrip(env, { server, type, pricePerHour: await hourlyPrice(env, type), by: "you", reason: null });
+}
+
+async function claudeBudget(env) {
+  const limit = dailyBudget(env);
+  return { spent: claudeSpent((await records(env).read()).trips, Date.now()), limit };
+}
+
+const creates = new Set(["create", "replace"]);
+
+async function wakeServer(env, { size = "small", by = "you", reason = null } = {}) {
   const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
   const server = servers[0];
   const outcome = wakeByStatus[server ? server.status : "none"] ?? "busy";
-  if (outcome === "create") {
-    console.log("creating server");
-    await createServer(env);
-  } else if (outcome === "replace") {
+  if (!creates.has(outcome)) {
+    if (replies[outcome][0] < 400) await records(env).setWant("awake");
+    return { outcome, size: server ? sizeOf(server.server_type?.name) : size };
+  }
+  let type = sizes[size];
+  let pricePerHour = await hourlyPrice(env, type);
+  let instead = null;
+  let budget = null;
+  if (by === "claude" && size !== "small") {
+    budget = await claudeBudget(env);
+    if (budget.spent + pricePerHour > budget.limit) {
+      type = sizes.small;
+      instead = "budget";
+      pricePerHour = await hourlyPrice(env, type);
+    }
+  }
+  if (outcome === "replace") {
     console.log(`replacing ${server.name} (${server.id}), powered off`);
     await deleteAndWait(env, server.id);
-    await createServer(env);
+    await records(env).endTrip(server.id, new Date().toISOString());
   }
-  if (replies[outcome][0] < 400) await records(env).setWant("awake");
-  return outcome;
+  console.log(`creating server, ${type}`);
+  const made = await createServer(env, type);
+  if (made.type !== type) {
+    instead = "capacity";
+    pricePerHour = await hourlyPrice(env, made.type);
+  }
+  await openTrip(env, { ...made, pricePerHour, by, reason }, { claim: true });
+  await records(env).setWant("awake");
+  return { outcome, size: sizeOf(made.type), pricePerHour, instead, budget };
 }
 
 async function wake(request, env) {
-  const [status, message] = replies[await wakeServer(env)];
-  return text(message, status);
+  const asked = (await request.text()).trim();
+  const size = asked || "small";
+  if (!Object.hasOwn(sizes, size)) return text("Say small, medium or large.", 400);
+  const woken = await wakeServer(env, { size });
+  if (woken.size === size || !asked || woken.outcome === "busy") return text(replies[woken.outcome][1], replies[woken.outcome][0]);
+  if (woken.instead === "capacity") return text(`Waking up at ${woken.size}, because Hetzner has no ${size} free. Ready in about 30 seconds.`, 202);
+  return text(`Already awake at ${woken.size}. Sleep it first to change size.`, 200);
 }
 
 const json = (body) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 
-async function submitOrder(env, body, limits) {
+async function submitOrder(env, body, limits, wakeWith) {
   if (!validOrderRequest(body)) return { refused: [400, "Bad order."] };
   const placed = await records(env).order(body, limits);
   if (placed.refused) return placed;
-  const outcome = orderActions[body.action].wakes ? await wakeServer(env) : null;
-  return { rev: placed.rev, woke: outcome === "create" || outcome === "replace" ? outcome : null };
+  return { rev: placed.rev, woken: orderActions[body.action].wakes ? await wakeServer(env, wakeWith) : null };
 }
 
 async function placeOrder(request, env) {
   const placed = await submitOrder(env, await request.json().catch(() => null));
   if (placed.refused) return text(placed.refused[1], placed.refused[0]);
-  return json(placed);
+  return json({ rev: placed.rev, woke: creates.has(placed.woken?.outcome) ? placed.woken.outcome : null });
 }
 
 async function listOrders(request, env) {
@@ -469,8 +600,10 @@ async function want(request, env) {
 }
 
 async function readState(env) {
+  const limit = dailyBudget(env);
   const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
-  return buildState(servers[0] ?? null, await records(env).read(), Date.now());
+  await reconcileTrips(env, servers[0] ?? null);
+  return buildState(servers[0] ?? null, await records(env).read(), Date.now(), limit);
 }
 
 async function state(request, env) {
@@ -489,24 +622,64 @@ const asyncNote = "Orders complete asynchronously and wake the computer (about 3
 
 const dataResult = (data) => ({ text: JSON.stringify(data, null, 2) });
 
+const maxReasonLength = 200;
+const sizeProperties = {
+  size: {
+    type: "string",
+    enum: Object.keys(sizes),
+    description: "How big a computer to wake, if this order wakes it. Start small. Medium suits two agents, or tests with a database. Large suits three agents or big builds, and sleeps after 4 hours. Size up only on evidence, like a container hitting its memory cap. A bigger size can't apply while the computer is already awake.",
+  },
+  reason: { type: "string", description: `Why it needs that size, under ${maxReasonLength} characters. Required for medium and large.` },
+};
+
+function sizeRefusal(size, reason) {
+  if (!Object.hasOwn(sizes, size)) return "Size is small, medium or large.";
+  if (!optional((r) => isText(r) && r.length <= maxReasonLength)(reason)) return `Keep reason under ${maxReasonLength} characters.`;
+  if (size !== "small" && !reason?.trim()) return `Say in reason why it needs a ${size} computer, for example that a container hit its memory cap.`;
+  return null;
+}
+
+const awakeWords = { awake: "awake", waking: "waking up" };
+
+function wakeNote(woken, asked) {
+  if (!woken) return "";
+  if (creates.has(woken.outcome)) {
+    const why = {
+      budget: () => `Claude has spent ${money(woken.budget.spent)} of ${money(woken.budget.limit)} today`,
+      capacity: () => `Hetzner has no ${asked} free right now`,
+    }[woken.instead];
+    return why
+      ? ` Waking at ${woken.size} instead of ${asked}: ${why()}.`
+      : ` Waking at ${woken.size} ($${woken.pricePerHour.toFixed(3)}/hour). Check list_containers in about a minute.`;
+  }
+  if (asked && awakeWords[woken.outcome] && woken.size !== asked) {
+    return ` The computer is already ${awakeWords[woken.outcome]} at ${woken.size}; ${asked} only applies at the next wake.`;
+  }
+  return "";
+}
+
 function orderTool(action, description, inputSchema, annotations = { destructiveHint: false }) {
+  const sized = Object.hasOwn(inputSchema.properties, "size");
   return {
     description: `${description} ${asyncNote}`,
     inputSchema,
     annotations,
     async run(args, env) {
       const { name, task, repo, from } = args;
-      const placed = await submitOrder(env, { action, name, task, repo, from }, claudeLimits);
+      const size = sized ? args.size ?? "small" : "small";
+      const reason = sized ? args.reason ?? null : null;
+      const badSize = sizeRefusal(size, reason);
+      if (badSize) return { refused: badSize };
+      const placed = await submitOrder(env, { action, name, task, repo, from }, claudeLimits, { size, by: "claude", reason });
       if (placed.refused) return { refused: refusalsForClaude[placed.refused[0]] ?? placed.refused[1] };
-      const woke = placed.woke ? " The computer is waking up; check list_containers in about a minute." : "";
-      return { text: `Ordered (rev ${placed.rev}).${woke}` };
+      return { text: `Ordered (rev ${placed.rev}).${wakeNote(placed.woken, sized ? args.size : undefined)}` };
     },
   };
 }
 
 const tools = {
   list_containers: {
-    description: "Shows the computer's state and every container: its task, repo, branch, unpushed or uncommitted work, whether the agent is working, and the latest order's rev, doneRev and error. Asks Hetzner, so it is the live view. " + untrustedNote,
+    description: "Shows the computer's state and size, what Claude has spent on it today against its daily budget, and every container: its task, repo, branch, unpushed or uncommitted work, whether the agent is working, and the latest order's rev, doneRev and error. Asks Hetzner, so it is the live view. " + untrustedNote,
     inputSchema: schema({}, []),
     annotations: { readOnlyHint: true },
     run: async (args, env) => dataResult(await readState(env)),
@@ -528,6 +701,7 @@ const tools = {
       name: nameProperty,
       task: { type: "string", description: "What the Claude agent in the container should do." },
       repo: { type: "string", description: "GitHub repo as OWNER/REPO." },
+      ...sizeProperties,
     }, ["name"])),
   fork_container: orderTool("fork",
     "Copies the container called from into a new one called name, optionally starting Claude on a task. Use from \"base\" for a fresh copy.",
@@ -535,6 +709,7 @@ const tools = {
       from: { type: "string", description: "Name of the container to copy, or base." },
       name: nameProperty,
       task: { type: "string", description: "What the Claude agent in the new container should do." },
+      ...sizeProperties,
     }, ["from", "name"])),
   start_container: orderTool("start", "Starts a stopped container called name.", nameOnly),
   stop_container: orderTool("stop", "Stops the container called name without deleting it.", nameOnly),
@@ -622,13 +797,21 @@ export default {
     const maxAwake = Number(env.MAX_AWAKE_MINUTES);
     if (!(maxAwake > 0)) throw new Error(`MAX_AWAKE_MINUTES must be a positive number, got ${env.MAX_AWAKE_MINUTES}`);
     const { servers } = await hetzner(env, "GET", `/servers?name=${name}`);
+    const stored = await records(env).read();
+    const deleted = new Set();
     for (const server of servers) {
-      const minutes = (Date.now() - Date.parse(server.created)) / 60000;
-      const action = sweepAction(server.status, minutes, maxAwake);
+      const now = Date.now();
+      const minutes = (now - Date.parse(server.created)) / 60000;
+      const action = sweepAction(server.status, minutes, sweepLimits(env, server, stored, maxAwake, now));
       if (!action) continue;
       console.log(`${action} ${server.name} (${server.id}), ${server.status} for ${Math.floor(minutes)} min`);
       await hetzner(env, ...sweepRequests[action](server.id));
+      if (action === "delete") {
+        await records(env).endTrip(server.id, new Date().toISOString());
+        deleted.add(server.id);
+      }
     }
+    await reconcileTrips(env, servers[0] && !deleted.has(servers[0].id) ? servers[0] : null);
     if (!servers[0] || servers[0].status === "off") await records(env).setWant("asleep");
     await rebuildImage(env);
   },

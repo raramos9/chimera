@@ -16,6 +16,24 @@ Host chimera
 
 An accidental `ssh chimera` keeps the computer on for the usual 30 idle minutes.
 
+## Waking a bigger computer
+
+The computer comes in three sizes. Every wake is small unless it asks for more:
+
+```
+chimera wake --size medium    # small, medium or large
+```
+
+| Size | Hetzner type | CPUs | Memory |
+| --- | --- | --- | --- |
+| small | cpx11 | 2 | 2 GB |
+| medium | cpx21 | 3 | 4 GB |
+| large | cpx31 | 4 | 8 GB |
+
+Nothing remembers the size, so every sleep resets it to small. The size can't change while the computer is awake. `chimera wake --size large` on an awake small computer says so and leaves it small. Sleep it first. If Hetzner has no room for a bigger size, the wake falls back to small. `ssh chimera`, the phone Shortcut and the dashboard always wake it small. `chimera status` names the size on its second line.
+
+Hetzner bills from the moment the computer is made until it's deleted, rounded up to whole hours, so even a 5-minute wake costs an hour.
+
 ## Opening an app running on the computer
 
 Anything listening on the computer opens from your laptop or phone at `http://chimera:<port>`. For example, a dev server on port 3000 is `http://chimera:3000`.
@@ -71,7 +89,7 @@ A request that fails, like a `new` whose repo can't be cloned, stays in place wi
 
 On the computer itself, the same five commands go through the Worker the same way, using the computer's own password.
 
-Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use at most 1.5 GB of memory.
+Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use all of the computer's memory except 512 MB, and never less than 1.5 GB, so containers get more on a bigger computer. The limit is set again on every boot.
 
 `run` starts the command in a new tmux window inside the container and returns right away, so you can disconnect. `chimera shell NAME` attaches to that tmux. From inside the computer's own tmux, press Ctrl-b twice to reach the inner one. The computer stays on while a `run` command is going, even with nobody connected, and the usual 30-minute countdown starts when it ends. Inside a container, Claude and `awake` keep the computer on the same way they do outside one. The Worker still shuts everything down after 24 hours.
 
@@ -144,7 +162,7 @@ Good to know:
 
 `chimera status` and `chimera ls` on the laptop don't wake the computer. They ask the Worker, which remembers the last report the computer sent. The computer sends one every 2 minutes, when it boots, after it acts on a request, and just before it shuts down. Both commands say how old the information is, for example `Computer asleep. Last report 40 min ago.` `ls` also lists commits that aren't on GitHub and uncommitted files, with how long ago they were checked. A container that is stopped keeps its last check.
 
-Line 1 of `chimera status` is `asleep`, `waking`, `awake` or `going-to-sleep`. Line 2 is the report age, and says so if an agent was working at the time.
+Line 1 of `chimera status` is `asleep`, `waking`, `awake` or `going-to-sleep`. Line 2 is the report age, says so if an agent was working at the time, and names the size while there is a computer.
 
 Set this up once. `chimera agent-key` makes a password for the computer, copies it to the computer's disk, and prints the last step:
 
@@ -174,6 +192,14 @@ The page stops working when the computer sleeps, and opening it doesn't wake the
 The Worker also speaks MCP at `/mcp`, so Claude Code on the laptop can list containers, make and fork them, start and stop them, delete them, and read their results, all by itself. It uses its own password, so the wake password and the computer's password don't open it.
 
 Claude can't force a delete: if a container has work that isn't on GitHub, the delete is refused and only you can force it. It can't put the computer to sleep, restore backups or build images, and it can't make a fourth container while three exist. Its orders wake the computer like any other, and finish on their own a little later.
+
+When an order from Claude makes a new container, Claude can ask for a medium or large computer, and has to say why. It's told to start small and size up only on evidence, like a container hitting its memory cap. A size only applies when the order wakes the computer. If it's already awake, Claude is told the size applies at the next wake.
+
+Claude has a daily budget, $2 by default, set as `CLAUDE_DAILY_BUDGET` in `control/wrangler.toml`. The Worker records every time the computer is awake, who woke it, at what size and price, and Claude's reason. Claude's spend is the cost of the wakes it started today, Pacific time. If one more hour at the size Claude asked for would go over the budget, the computer wakes small instead. Small is always allowed. The dashboard shows `Claude today: $0.84 of $2.00`, and `list_containers` lists today's wakes.
+
+A large computer Claude woke sleeps after 4 hours instead of 24. A medium or large computer Claude woke also sleeps once Claude is over budget for the day and no agent is working. Wakes you start, from the laptop, the phone or the dashboard, have no budget.
+
+The budget is the Worker's own bookkeeping. As a backstop that doesn't depend on it, set a cost alert in Hetzner's console at console.hetzner.com/usage.
 
 Set this up once:
 

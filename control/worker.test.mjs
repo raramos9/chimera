@@ -34,13 +34,28 @@ const image = (id, ageDays, extra = {}) =>
 const freshImages = [image(555, 1), image(444, 8)];
 let images = freshImages;
 let builds = [];
+const prices = { cpx11: "0.0100000000", cpx21: "0.0600000000", cpx31: "0.1200000000" };
+let unavailable = new Set();
+let serverIds = 1000;
 
 globalThis.fetch = async (url, init) => {
   const { pathname, searchParams } = new URL(url);
   calls.push({ url, method: init.method, headers: init.headers, body: init.body });
   if (init.method === "PUT") return new Response(JSON.stringify({ image: {} }));
   if (init.method === "DELETE") return new Response(JSON.stringify({ action: { id: 7, status: "running" } }));
+  if (init.method === "POST" && pathname === "/v1/servers") {
+    const { server_type } = JSON.parse(init.body);
+    if (unavailable.has(server_type)) {
+      return new Response(JSON.stringify({ error: { code: "resource_unavailable", message: "unavailable" } }), { status: 412 });
+    }
+    return new Response(JSON.stringify({ server: { id: ++serverIds } }));
+  }
   if (init.method === "POST") return new Response(JSON.stringify({ server: { id: 1 } }));
+  if (pathname === "/v1/server_types") {
+    const type = searchParams.get("name");
+    const listed = [{ location: "fsn1", price_hourly: { gross: "9" } }, { location: "hil", price_hourly: { gross: prices[type] } }];
+    return new Response(JSON.stringify({ server_types: [{ name: type, prices: listed }] }));
+  }
   if (pathname === "/v1/volumes") return new Response(JSON.stringify({ volumes: volumes.filter((v) => v.name === searchParams.get("name")) }));
   if (pathname === "/v1/images") {
     const status = searchParams.get("status");
@@ -69,7 +84,7 @@ const records = new Records(
 );
 const RECORDS = { idFromName: (id) => id, get: () => records };
 const testEnv = (extra = {}) =>
-  ({ HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440", WAKE_TOKEN: "pw", AGENT_TOKEN: "agent", CLAUDE_TOKEN: "claude", RECORDS, ...extra });
+  ({ HCLOUD_TOKEN: "t", MAX_AWAKE_MINUTES: "1440", CLAUDE_DAILY_BUDGET: "2", WAKE_TOKEN: "pw", AGENT_TOKEN: "agent", CLAUDE_TOKEN: "claude", RECORDS, ...extra });
 
 const unpackUserData = (packed) => {
   const [, base64] = packed.match(/^Content-Transfer-Encoding: base64\n\n(\S+)\n--chimera--\n$/m);
@@ -86,8 +101,8 @@ async function run(label, servers, check) {
 
 const deletes = () => calls.filter((c) => c.method === "DELETE");
 const posts = () => calls.filter((c) => c.method === "POST");
-const server = (status, minutesAgo) =>
-  ({ id: 42, name: "chimera", status, created: new Date(Date.now() - minutesAgo * 60000).toISOString() });
+const server = (status, minutesAgo, type = "cpx11") =>
+  ({ id: 42, name: "chimera", status, created: new Date(Date.now() - minutesAgo * 60000).toISOString(), server_type: { name: type } });
 
 await run("powered-off server is deleted", [server("off", 60)], () => {
   assert.equal(calls[0].url, "https://api.hetzner.cloud/v1/servers?name=chimera");
@@ -217,13 +232,13 @@ await runWake("asleep computer is created", [], () => wake("pw"), async (res) =>
   assert.equal(unpackUserData(body.user_data), fs.readFileSync(fileURLToPath(new URL("../cloud-init.yaml", import.meta.url)), "utf8"));
 });
 
-await runWake("running computer is left alone", [{ id: 42, name: "chimera", status: "running" }], () => wake("pw"), async (res) => {
+await runWake("running computer is left alone", [{ id: 42, name: "chimera", status: "running", server_type: { name: "cpx11" } }], () => wake("pw"), async (res) => {
   assert.equal(res.status, 200);
   assert.equal(await res.text(), "Already awake.");
   assert.equal(posts().length, 0);
 });
 
-await runWake("starting computer is left alone", [{ id: 42, name: "chimera", status: "starting" }], () => wake("pw"), async (res) => {
+await runWake("starting computer is left alone", [{ id: 42, name: "chimera", status: "starting", server_type: { name: "cpx11" } }], () => wake("pw"), async (res) => {
   assert.equal(res.status, 200);
   assert.equal(await res.text(), "Already waking up.");
   assert.equal(posts().length, 0);
@@ -244,6 +259,7 @@ await runWake("powered-off computer is deleted, then created", [{ id: 42, name: 
   assert.equal(res.status, 202);
   const steps = calls.slice(1).map((c) => `${c.method} ${new URL(c.url).pathname}`);
   assert.deepEqual(steps, [
+    "GET /v1/server_types",
     "DELETE /v1/servers/42",
     "GET /v1/actions/7",
     "GET /v1/actions/7",
@@ -568,7 +584,7 @@ storage.set("computer", { ...storage.get("computer"), wantAt: old });
 await run("the cron doesn't rewrite a want that is already asleep", [], () => assert.equal(storage.get("computer").wantAt, old));
 
 const order = (body, token = "pw") => call("POST", "/orders", { token, body: JSON.stringify(body) });
-const runningServer = [{ id: 42, name: "chimera", status: "running", created: secondsAgo(600) }];
+const runningServer = [{ id: 42, name: "chimera", status: "running", created: secondsAgo(600), server_type: { name: "cpx11" } }];
 const serverPosts = () => posts().filter((c) => new URL(c.url).pathname === "/v1/servers");
 const placeOrder = async (servers, body, token) => {
   calls.length = 0;
@@ -921,7 +937,7 @@ calls.length = 0;
 list = () => new Response(JSON.stringify({ servers: [] }));
 toolRes = (await tool("new_container", { name: "m", task: "do it", repo: "o/r", force: true, from: "ignored-by-new" })).result;
 assert.equal(toolRes.isError, false);
-assert.equal(toolRes.content[0].text, "Ordered (rev 1). The computer is waking up; check list_containers in about a minute.");
+assert.equal(toolRes.content[0].text, "Ordered (rev 1). Waking at small ($0.010/hour). Check list_containers in about a minute.");
 assert.equal(serverPosts().length, 1);
 assert.deepEqual({ ...storage.get("orders").m, orderedAt: undefined },
   { name: "m", want: "running", force: false, from: "base", task: "do it", repo: "o/r", rev: 1, orderedAt: undefined });
@@ -989,3 +1005,226 @@ toolRes = (await tool("list_containers", {})).result;
 assert.equal(toolRes.isError, true);
 assert.match(toolRes.content[0].text, /^Something went wrong: GET \/servers\?name=chimera: 500 down/);
 console.log("PASS: a Hetzner failure becomes an error result, not a 500");
+
+images = freshImages;
+builds = [];
+const pacific = (time) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(time);
+const today = pacific(Date.now());
+const midnight = ["-07:00", "-08:00"].map((zone) => Date.parse(`${today}T00:00:00${zone}`))
+  .find((time) => pacific(time) === today && pacific(time - 1000) !== today);
+const at = (ms) => new Date(ms).toISOString();
+const trip = (serverId, extra = {}) =>
+  ({ server: serverId, by: "claude", size: "small", type: "cpx11", pricePerHour: 0.5, reason: null, start: at(midnight + 1000), end: null, ...extra });
+const servers = (...fleet) => () => new Response(JSON.stringify({ servers: fleet }));
+const serverTypes = () => serverPosts().map((c) => JSON.parse(c.body).server_type);
+const wakeWith = async (size, fleet) => {
+  calls.length = 0;
+  list = servers(...fleet);
+  const r = await call("POST", "/wake", { body: size });
+  return [r.status, await r.text()];
+};
+const tripsFor = (serverId) => storage.get("trips").filter((t) => t.server === serverId);
+const newest = () => storage.get("trips").at(-1);
+
+resetRecords();
+assert.deepEqual(await wakeWith("medium\n", []), [202, "Waking up. Ready in about 30 seconds."]);
+assert.deepEqual(serverTypes(), ["cpx21"]);
+assert.deepEqual({ ...newest(), start: undefined },
+  { server: serverIds, by: "you", size: "medium", type: "cpx21", pricePerHour: 0.06, reason: null, start: undefined, end: null });
+assert.ok(nearNow(newest().start));
+assert.deepEqual(await wakeWith("", []), [202, "Waking up. Ready in about 30 seconds."]);
+assert.deepEqual(serverTypes(), ["cpx11"]);
+assert.deepEqual(await wakeWith("huge", []), [400, "Say small, medium or large."]);
+assert.equal(calls.length, 0);
+assert.deepEqual(await wakeWith("large", [server("running", 60)]), [200, "Already awake at small. Sleep it first to change size."]);
+assert.deepEqual(await wakeWith("large", [server("starting", 1, "cpx31")]), [200, "Already waking up."]);
+assert.deepEqual(await wakeWith("", [server("running", 60, "cpx31")]), [200, "Already awake."], "a wake that names no size takes whatever size is awake");
+assert.deepEqual(await wakeWith("small", [server("running", 60)]), [200, "Already awake."]);
+assert.deepEqual(await wakeWith("medium", [server("stopping", 60)]), [409, "Going to sleep. Try again in a minute."]);
+assert.equal(serverPosts().length, 0);
+console.log("PASS: /wake takes an optional size, and says so when it's already awake at another size");
+
+resetRecords();
+unavailable = new Set(["cpx31"]);
+assert.deepEqual(await wakeWith("large", []), [202, "Waking up at small, because Hetzner has no large free. Ready in about 30 seconds."]);
+assert.deepEqual(serverTypes(), ["cpx31", "cpx11"]);
+assert.deepEqual([newest().size, newest().type, newest().pricePerHour], ["small", "cpx11", 0.01]);
+unavailable = new Set(["cpx11"]);
+assert.match((await wakeWith("small", []).catch((e) => [e.message]))[0], /resource_unavailable/);
+assert.deepEqual(serverTypes(), ["cpx11"]);
+unavailable = new Set(["cpx21"]);
+resetRecords();
+list = servers();
+toolRes = (await tool("new_container", { name: "cap", size: "medium", reason: "two agents" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 1). Waking at small instead of medium: Hetzner has no medium free right now.");
+assert.deepEqual([newest().by, newest().size, newest().reason], ["claude", "small", "two agents"]);
+unavailable = new Set();
+console.log("PASS: a bigger size Hetzner can't place falls back to small once, and small itself never retries");
+
+resetRecords();
+list = servers();
+toolRes = (await tool("new_container", { name: "pg", size: "medium", reason: "tests need postgres" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 1). Waking at medium ($0.060/hour). Check list_containers in about a minute.");
+assert.deepEqual({ ...newest(), start: undefined },
+  { server: serverIds, by: "claude", size: "medium", type: "cpx21", pricePerHour: 0.06, reason: "tests need postgres", start: undefined, end: null });
+toolRes = (await tool("start_container", { name: "pg", size: "large", reason: "ignored" })).result;
+assert.equal(toolRes.isError, false);
+console.log("PASS: a wake by Claude records a trip with its size and reason");
+
+resetRecords();
+const laptopMade = { ...server("running", 30, "cpx21"), id: 77 };
+storage.set("trips", [trip(42), trip(5, { end: at(midnight + 2000) })]);
+calls.length = 0;
+body = await getState([laptopMade]);
+assert.deepEqual(tripsFor(77), [{ server: 77, by: "you", size: "medium", type: "cpx21", pricePerHour: 0.06, reason: null, start: laptopMade.created, end: null }]);
+assert.ok(nearNow(tripsFor(42)[0].end));
+assert.equal(tripsFor(5)[0].end, at(midnight + 2000));
+const ended = tripsFor(42)[0].end;
+await getState([laptopMade]);
+await getState([laptopMade]);
+assert.equal(storage.get("trips").length, 3);
+assert.equal(tripsFor(42)[0].end, ended);
+assert.equal(calls.filter((c) => c.url.includes("/server_types")).length, 1);
+console.log("PASS: reading state backfills a server made elsewhere as yours, ends trips whose server is gone, and does both once");
+
+resetRecords();
+storage.set("trips", [trip(42), trip(9)]);
+await run("our delete ends the deleted server's trip", [server("off", 60)], () => {
+  assert.ok(nearNow(tripsFor(42)[0].end));
+  assert.ok(nearNow(tripsFor(9)[0].end));
+  assert.equal(storage.get("trips").length, 2);
+});
+storage.set("trips", [trip(8)]);
+await run("the cron ends a trip whose server vanished", [], () => assert.ok(nearNow(tripsFor(8)[0].end)));
+
+resetRecords();
+await records.openTrip(trip(1));
+await records.openTrip(trip(1, { by: "you" }));
+await records.endTrip(1, at(midnight + 5000));
+await records.endTrip(1, at(midnight + 9000));
+assert.deepEqual(storage.get("trips"), [trip(1, { end: at(midnight + 5000) })]);
+console.log("PASS: opening and ending a trip twice changes nothing the second time");
+
+resetRecords();
+storage.set("trips", [trip(1, { end: daysAgo(36) }), trip(2, { end: daysAgo(34) }), trip(3, { start: daysAgo(40) })]);
+await records.openTrip(trip(4));
+assert.deepEqual(storage.get("trips").map((t) => t.server), [2, 3, 4]);
+console.log("PASS: trips that ended more than 35 days ago are dropped on the next write");
+
+resetRecords();
+storage.set("trips", [
+  trip(1, { end: at(midnight + 1000 + 5 * 60000) }),
+  trip(2, { end: at(midnight + 1000 + 61 * 60000), size: "large", reason: "big build" }),
+  trip(3, { by: "you", end: at(midnight + 1000 + 3 * 3600000) }),
+  trip(4, { start: at(midnight - 1000), end: at(midnight + 1000) }),
+]);
+body = await getState([]);
+assert.equal(body.size, null);
+assert.deepEqual(body.budget, {
+  spent: 1.5,
+  limit: 2,
+  today: [
+    { by: "claude", size: "small", reason: null, start: at(midnight + 1000), end: at(midnight + 1000 + 5 * 60000), cost: 0.5 },
+    { by: "claude", size: "large", reason: "big build", start: at(midnight + 1000), end: at(midnight + 1000 + 61 * 60000), cost: 1 },
+    { by: "you", size: "small", reason: null, start: at(midnight + 1000), end: at(midnight + 1000 + 3 * 3600000), cost: 1.5 },
+  ],
+});
+storage.set("trips", [trip(42, { pricePerHour: 1 }), trip(6, { pricePerHour: 0.0126, end: at(midnight + 1000 + 61 * 60000) })]);
+body = await getState([server("running", 5, "cpx31")]);
+assert.equal(body.size, "large");
+assert.equal(body.budget.today[0].cost, Math.max(1, Math.ceil((Date.now() - midnight - 1000) / 3600000)));
+assert.equal(body.budget.today[1].cost, 0.03);
+console.log("PASS: /state has the size and Claude's spend today: whole hours, at least one, Pacific days, rounded to cents");
+
+const overBudget = (extra) => [trip(1, { pricePerHour: 1.95, end: at(midnight + 2000) }), ...extra];
+resetRecords();
+storage.set("trips", overBudget([]));
+list = servers();
+calls.length = 0;
+toolRes = (await tool("new_container", { name: "big", size: "large", reason: "three agents" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 1). Waking at small instead of large: Claude has spent $1.95 of $2.00 today.");
+assert.deepEqual(serverTypes(), ["cpx11"]);
+assert.deepEqual([newest().size, newest().reason], ["small", "three agents"]);
+resetRecords();
+storage.set("trips", [trip(1, { pricePerHour: 1.8, end: at(midnight + 2000) })]);
+toolRes = (await tool("new_container", { name: "big", size: "large", reason: "three agents" })).result;
+assert.match(toolRes.content[0].text, /Waking at large \(\$0\.120\/hour\)/);
+resetRecords();
+storage.set("trips", [trip(1, { pricePerHour: 5, end: at(midnight + 2000) })]);
+calls.length = 0;
+toolRes = (await tool("fork_container", { from: "base", name: "small-one" })).result;
+assert.match(toolRes.content[0].text, /^Ordered \(rev 1\)\. Waking at small/);
+assert.deepEqual(serverTypes(), ["cpx11"]);
+console.log("PASS: Claude wakes at small instead when an hour more would pass its budget, and small is always allowed");
+
+resetRecords();
+for (const [args, message] of [
+  [{ name: "r", size: "medium" }, "Say in reason why it needs a medium computer, for example that a container hit its memory cap."],
+  [{ name: "r", size: "large", reason: "  " }, "Say in reason why it needs a large computer, for example that a container hit its memory cap."],
+  [{ name: "r", size: "large", reason: "x".repeat(201) }, "Keep reason under 200 characters."],
+  [{ name: "r", size: "huge", reason: "x" }, "Size is small, medium or large."],
+]) {
+  toolRes = (await tool("new_container", args)).result;
+  assert.deepEqual([toolRes.isError, toolRes.content[0].text], [true, message], JSON.stringify(args));
+}
+assert.equal(storage.size, 0);
+const schemaSize = toolByName.new_container.inputSchema.properties.size;
+assert.deepEqual(schemaSize.enum, ["small", "medium", "large"]);
+assert.match(schemaSize.description, /Start small/);
+assert.ok(toolByName.fork_container.inputSchema.properties.reason);
+assert.equal(toolByName.start_container.inputSchema.properties.size, undefined);
+console.log("PASS: medium and large need a reason, and a bad size or reason is refused before anything is stored");
+
+resetRecords();
+list = servers(server("running", 60));
+calls.length = 0;
+toolRes = (await tool("new_container", { name: "late", size: "large", reason: "big build" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 1). The computer is already awake at small; large only applies at the next wake.");
+list = servers(server("starting", 1, "cpx21"));
+toolRes = (await tool("new_container", { name: "later", size: "large", reason: "big build" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 2). The computer is already waking up at medium; large only applies at the next wake.");
+toolRes = (await tool("new_container", { name: "plain" })).result;
+assert.equal(toolRes.content[0].text, "Ordered (rev 3).");
+assert.equal(serverPosts().length, 0);
+console.log("PASS: a size asked for while the computer is awake says it only applies at the next wake");
+
+const sweep = async (label, fleet, trips, computer, expected) => {
+  resetRecords();
+  storage.set("trips", trips);
+  if (computer) storage.set("computer", computer);
+  await run(label, fleet, () => assert.deepEqual(posts().map((c) => new URL(c.url).pathname), expected));
+};
+const shutdown = ["/v1/servers/42/actions/shutdown"];
+const poweroff = ["/v1/servers/42/actions/poweroff"];
+await sweep("Claude's large computer shuts down after 4 hours", [server("running", 241, "cpx31")], [trip(42, { size: "large" })], null, shutdown);
+await sweep("and is forced off 15 minutes later", [server("running", 256, "cpx31")], [trip(42, { size: "large" })], null, poweroff);
+await sweep("a large computer you woke keeps the usual limit", [server("running", 241, "cpx31")], [trip(42, { size: "large", by: "you" })], null, []);
+await sweep("Claude's medium computer keeps the usual limit", [server("running", 241, "cpx21")], [trip(42, { size: "medium" })], null, []);
+const idleSince = (busy, created = 60) => ({ want: "awake", wantAt: null, busy, reportedAt: secondsAgo(60 * created - 60) });
+const spendy = [trip(1, { pricePerHour: 5, end: at(midnight + 2000) })];
+await sweep("Claude's idle medium computer over budget shuts down",
+  [server("running", 60, "cpx21")], [...spendy, trip(42, { size: "medium" })], idleSince(false), shutdown);
+await sweep("but not while an agent is working",
+  [server("running", 60, "cpx21")], [...spendy, trip(42, { size: "medium" })], idleSince(true), []);
+await sweep("nor before it has reported since it woke",
+  [server("running", 60, "cpx21")], [...spendy, trip(42, { size: "medium" })], { ...idleSince(false), reportedAt: secondsAgo(4000) }, []);
+await sweep("nor at small", [server("running", 60)], [...spendy, trip(42)], idleSince(false), []);
+await sweep("nor under budget", [server("running", 60, "cpx21")], [trip(42, { size: "medium", pricePerHour: 0.06 })], idleSince(false), []);
+await sweep("nor when you woke it", [server("running", 60, "cpx21")], [...spendy, trip(42, { size: "medium", by: "you" })], idleSince(false), []);
+
+resetRecords();
+storage.set("trips", spendy);
+placed = await placeOrder([], { action: "new", name: "mine", size: "large" });
+assert.deepEqual(placed.body, { rev: 1, woke: "create" });
+assert.deepEqual(serverTypes(), ["cpx11"]);
+assert.deepEqual([newest().by, newest().size, newest().reason], ["you", "small", null]);
+console.log("PASS: HTTP orders wake at small as you, with no budget");
+
+resetRecords();
+const raced = { server: 77, by: "you", size: "large", type: "cpx31", pricePerHour: 0.12, reason: null, start: secondsAgo(5), end: null };
+await records.openTrip(raced);
+await records.openTrip({ ...raced, by: "claude", reason: "three agents" });
+assert.equal(storage.get("trips")[0].by, "you");
+await records.openTrip({ ...raced, by: "claude", reason: "three agents", start: secondsAgo(1) }, { claim: true });
+assert.deepEqual(storage.get("trips"), [{ ...raced, by: "claude", reason: "three agents" }]);
+console.log("PASS: the Worker's own create claims a trip a reconcile recorded first, keeping its start");

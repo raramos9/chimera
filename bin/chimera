@@ -2,7 +2,7 @@
 set -euo pipefail
 
 name=chimera
-server_type=cpx11
+sizes='{"small": "cpx11", "medium": "cpx21", "large": "cpx31"}'
 location=hil
 base_image=ubuntu-24.04
 image_label=chimera=base
@@ -15,9 +15,15 @@ config=~/.config/chimera
 cloud_init="$(dirname "$0")/../cloud-init.yaml"
 image_init="$(dirname "$0")/../image.yaml"
 
-server_status() {
-  hcloud server list -o json | jq -r --arg n "$name" '(. // [])[] | select(.name == $n) | .status'
+server_field() {
+  hcloud server list -o json | jq -r --arg n "$name" --arg f "$1" '(. // [])[] | select(.name == $n) | getpath($f | split("."))'
 }
+
+server_status() { server_field status; }
+
+type_of() { jq -r --arg size "$1" '.[$size] // empty' <<<"$sizes"; }
+
+size_of() { jq -r --arg type "$1" 'to_entries | map(select(.value == $type))[0].key // $type' <<<"$sizes"; }
 
 ssh_answers() {
   ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none "$user@$name" true 2>/dev/null
@@ -63,7 +69,8 @@ cmd_status() {
     echo "Warning: public SSH is open. Close it with: hcloud firewall apply-to-resource $firewall --type server --server $name" >&2
   fi
   jq -r .state <<<"$info"
-  echo "$(report_age "$info")$(jq -r 'if .busy == true then " An agent was working." else "" end' <<<"$info")"
+  echo "$(report_age "$info")$(jq -r '(if .busy == true then " An agent was working." else "" end)
+    + (if .size then " Size \(.size)." else "" end)' <<<"$info")"
 }
 
 work_notes() {
@@ -228,20 +235,32 @@ pack_user_data() {
 }
 
 create_server() {
-  local image user_data=$1
-  shift
+  local image type=$1 user_data=$2
+  shift 2
   image=$(newest_image)
   [ -n "$image" ] || { echo "There's no chimera image yet. Build one with 'chimera build-image'." >&2; exit 1; }
-  hcloud server create --name "$name" --type "$server_type" --image "$image" \
+  hcloud server create --name "$name" --type "$type" --image "$image" \
     --location "$location" --ssh-key "$ssh_key" --primary-ipv4 "$primary_ip" \
     "${volumes[@]/#/--volume=}" --user-data-from-file <(pack_user_data "$user_data") "$@"
 }
 
 cmd_wake() {
-  local deadline=$((SECONDS + 900)) waiting=
+  local usage="usage: chimera wake [--size small|medium|large]" size=small type running deadline=$((SECONDS + 900)) waiting=
+  if [ $# -gt 0 ]; then
+    [ $# -eq 2 ] && [ "$1" = --size ] || { echo "$usage" >&2; exit 2; }
+    size=$2
+  fi
+  type=$(type_of "$size")
+  [ -n "$type" ] || { echo "$usage" >&2; exit 2; }
+  if [ $# -gt 0 ]; then
+    case "$(server_status)" in
+      running|initializing|starting) running=$(size_of "$(server_field server_type.name)")
+        [ "$running" = "$size" ] || echo "Already awake at $running. Sleep it first to change size." ;;
+    esac
+  fi
   while [ "$SECONDS" -lt "$deadline" ]; do
     case "$(server_status)" in
-      "") create_server "$cloud_init" --firewall "$firewall" ;;
+      "") create_server "$type" "$cloud_init" --firewall "$firewall" ;;
       off) hcloud server delete "$name" || true ;;
       running) ssh_answers && { want awake; echo awake; return; } ;;
     esac
@@ -305,7 +324,7 @@ cmd_restore() {
   } > "$tmp/user-data"
 
   echo "Waking with public SSH open..."
-  create_server "$tmp/user-data"
+  create_server "$(type_of small)" "$tmp/user-data"
   local ip
   ip=$(hcloud server ip "$name")
   echo "$ip $(cut -d' ' -f1,2 "$tmp/host.pub")" > "$tmp/known_hosts"
@@ -345,7 +364,7 @@ cmd_build_image() {
   local build=chimera-image-build before
   before=$(newest_image)
   if [ -z "$(hcloud server list -o json | jq -r --arg n "$build" '(. // [])[] | select(.name == $n) | .name')" ]; then
-    hcloud server create --name "$build" --type "$server_type" --image "$base_image" --location "$location" \
+    hcloud server create --name "$build" --type "$(type_of small)" --image "$base_image" --location "$location" \
       --ssh-key "$ssh_key" --firewall "$firewall" --user-data-from-file "$image_init" >/dev/null
   fi
   echo "Building. The Worker saves the image once the build server powers off, usually within 10 minutes..."
@@ -366,7 +385,7 @@ cmd_forward() {
 
 case "${1:-}" in
   sleep) cmd_sleep ;;
-  wake) cmd_wake ;;
+  wake) shift; cmd_wake "$@" ;;
   connect) cmd_connect ;;
   status) cmd_status ;;
   backup-keys) cmd_backup_keys ;;

@@ -7,6 +7,7 @@ crons = ["*/5 * * * *"]
 
 [vars]
 MAX_AWAKE_MINUTES = "1440"
+CLAUDE_DAILY_BUDGET = "2"
 
 [observability]
 enabled = true

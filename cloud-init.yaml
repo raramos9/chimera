@@ -88,6 +88,32 @@ write_files:
     RequiresMountsFor=/var/lib/incus
     Requires=chimera-firewall.service
     After=chimera-firewall.service
+- path: /usr/local/bin/chimera-memory
+  permissions: "0755"
+  content: |
+    #!/bin/sh
+    set -eu
+    incus admin waitready --timeout 60
+    total=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
+    cap=$((total - 512))
+    [ "$cap" -ge 1536 ] || cap=1536
+    incus profile set default limits.memory="${cap}MiB"
+    incus config unset base limits.memory 2>/dev/null || true
+- path: /etc/systemd/system/chimera-memory.service
+  content: |
+    [Unit]
+    Description=Let containers use all but 512 MiB of this computer's memory, and at least 1536 MiB
+    Requires=incus.service
+    After=incus.service
+    Before=incus-startup.service
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    ExecStart=/usr/local/bin/chimera-memory
+
+    [Install]
+    WantedBy=multi-user.target
 - path: /usr/local/bin/chimera
   permissions: "0755"
   content: |
@@ -439,7 +465,7 @@ write_files:
 
     cmd_base() {
       incus delete -f base-new >/dev/null 2>&1 || true
-      incus launch images:ubuntu/24.04 base-new -c security.nesting=true -c limits.memory=1536MiB >/dev/null
+      incus launch images:ubuntu/24.04 base-new -c security.nesting=true >/dev/null
       ready base-new
       incus file push "$setup" base-new/root/base-setup.sh
       incus exec base-new -- bash /root/base-setup.sh </dev/null
@@ -903,7 +929,7 @@ runcmd:
 - systemctl reload systemd-logind
 - systemctl enable --now chimera-idle.timer chimera-backup.timer chimera-backup-on-shutdown.service
 - systemctl enable --now chimera-firewall.service
-- systemctl enable --now incus.socket incus-user.socket incus-startup.service
+- systemctl enable --now incus.socket incus-user.socket incus-startup.service chimera-memory.service
 - |
   incus admin waitready --timeout 60
   if ! incus storage show default >/dev/null 2>&1; then

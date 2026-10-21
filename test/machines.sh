@@ -37,7 +37,9 @@ c shell m-test test -e .claude/CLAUDE.md || fail "the container doesn't have CLA
 c shell m-test claude plugin list | grep -q 'code-review@claude-plugins-official' || fail "the container doesn't have the enabled plugins"
 c shell m-test bun --version >/dev/null || fail "bun isn't on the container's PATH"
 [ "$(c shell m-test git config user.email)" = ralphandrer04@gmail.com ] || fail "git has no identity in the container"
-[ "$(c shell m-test sh -c "free -m | awk '/Mem/{print \$2}'")" = 1536 ] || fail "the container isn't capped at 1536 MB"
+cap=$(( $(remote "awk '/^MemTotal:/ { print int(\$2 / 1024) }' /proc/meminfo") - 512 ))
+[ "$cap" -ge 1536 ] || cap=1536
+[ "$(c shell m-test sh -c "free -m | awk '/Mem/{print \$2}'")" = "$cap" ] || fail "the container isn't capped at $cap MB, 512 MB under the computer's memory"
 c shell m-test docker run --rm hello-world | grep -q 'Hello from Docker' || fail "Docker doesn't work inside the container"
 
 ! c shell base true 2>/dev/null || fail "shell was allowed to change base"

@@ -354,7 +354,9 @@ function renderRail(s) {
       s.state === "waking" && h("div", {}, "Usually about 40 seconds."),
       s.state === "going-to-sleep" && h("div", {}, "Backing up your files first."),
       h("div", {}, `Last report ${age(s.reportAgeSeconds)}`),
-      woke && !isNaN(woke) && h("div", {}, `Woke ${woke.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`)),
+      woke && !isNaN(woke) && h("div", {}, `Woke ${woke.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`),
+      s.state === "awake" && s.size && h("div", {}, `${s.size[0].toUpperCase()}${s.size.slice(1)} size`),
+      s.budget && h("div", {}, `Claude today: $${s.budget.spent.toFixed(2)} of $${s.budget.limit.toFixed(2)}`)),
     asking
       ? h("div", { className: "ask" },
           h("p", { className: "unsaved" }, `${["Claude is working", sleepNames(s)].filter(Boolean).join(" ")}. Sleep anyway? Your files are kept and backed up.`),
