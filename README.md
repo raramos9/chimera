@@ -24,7 +24,118 @@ What it does:
 
 Built with Cloudflare Workers and Durable Objects, Hetzner Cloud, cloud-init, Incus, Tailscale, restic and the Model Context Protocol. The Worker is plain JavaScript with no dependencies, tested by `node control/worker.test.mjs`. The scripts in `test/` check each feature against the real computer.
 
-## Running it yourself
+## Setting it up yourself
+
+Chimera is built for one person, so a few names are written into the code. Plan on an hour or two the first time.
+
+### What you need
+
+- Accounts with [Hetzner Cloud](https://www.hetzner.com/cloud), [Cloudflare](https://dash.cloudflare.com) (the free Workers plan is enough), [Tailscale](https://tailscale.com) and GitHub.
+- On the laptop: `hcloud`, `jq`, `curl`, `nc`, `openssl` and Node.js (for `npx wrangler`). On a Mac, `brew install hcloud jq node`.
+- Tailscale running on the laptop and on any phone you want to wake it from.
+
+### 1. Make it yours
+
+Change these to your own values:
+
+| File | What to change |
+| --- | --- |
+| `cloud-init.yaml` | The user `andre`, your SSH public keys at the top, the git email, and the three Worker addresses (`chimera-control.ralphandrer04.workers.dev`) |
+| `bin/chimera` | `user` and, if you want another Hetzner region, `location` |
+| `control/worker.js` | `location`, and `primaryIpId` and `firewallId` once step 2 gives you them |
+| `control/dashboard.html` | `watchBase`, your tailnet name in place of `tailed8053.ts.net` |
+| `cloud-init.yaml`, in `stack-setup.sh` | The `raramos9/ack` repo that gives containers a Claude Code setup. Point it at your own or remove that step |
+
+The scripts in `test/` also log in as `andre@chimera`. Search the repo for `andre` to find every spot.
+
+### 2. Hetzner
+
+Make a project in the Hetzner Console and an API token with read and write access. Then, from the laptop:
+
+```
+hcloud context create chimera
+hcloud ssh-key create --name laptop --public-key-from-file ~/.ssh/id_ed25519.pub
+hcloud volume create --name chimera-home --size 20 --location hil
+hcloud volume create --name chimera-machines --size 20 --location hil
+hcloud primary-ip create --name chimera-ip --type ipv4 --location hil
+hcloud firewall create --name chimera-firewall
+hcloud primary-ip describe chimera-ip -o json | jq .id
+hcloud firewall describe chimera-firewall -o json | jq .id
+```
+
+Leave the volumes blank. The first boot formats them. The firewall has no rules, which blocks everything coming in from the internet. Put the last two IDs in `control/worker.js`.
+
+Set a cost alert in the Console under Usage, since Hetzner has no billing API for the Worker to check.
+
+### 3. The Worker
+
+```
+mkdir -p ~/.config/chimera && cd control
+openssl rand -hex 32 > ~/.config/chimera/wake-token
+npx wrangler login
+npx wrangler deploy
+npx wrangler secret put HCLOUD_TOKEN
+npx wrangler secret put WAKE_TOKEN < ~/.config/chimera/wake-token
+echo "https://chimera-control.YOUR-SUBDOMAIN.workers.dev/wake" > ~/.config/chimera/wake-url
+```
+
+`wrangler deploy` prints the Worker's address. Use it in `wake-url` and in step 1's `cloud-init.yaml` edits, then deploy again.
+
+### 4. Backups
+
+In Cloudflare, make an R2 bucket called `chimera-backup` and give it lock rules so nothing can delete or change its objects. Make an R2 API token that can read and write that bucket. Then write the restic settings and a password:
+
+```
+cat > ~/.config/chimera/backup.env <<'END'
+RESTIC_REPOSITORY=s3:https://YOUR-ACCOUNT-ID.r2.cloudflarestorage.com/chimera-backup
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+END
+openssl rand -hex 32 > ~/.config/chimera/backup-password
+```
+
+Save the password in your password manager. Without it, nobody can open the backups, including you.
+
+### 5. First wake
+
+```
+bin/chimera build-image
+bin/chimera wake
+```
+
+The first wake can't reach Tailscale yet, so open public SSH for a few minutes, log the computer in, and close it again:
+
+```
+hcloud firewall remove-from-resource chimera-firewall --type server --server chimera
+ssh andre@$(hcloud server ip chimera) sudo tailscale up
+hcloud firewall apply-to-resource chimera-firewall --type server --server chimera
+```
+
+Open the login link it prints. The login is saved on `chimera-home`, so every later wake rejoins as the same device. Add the three `~/.ssh/config` lines from "Waking by connecting" below, then finish over Tailscale:
+
+```
+bin/chimera backup-keys
+bin/chimera agent-key
+cd control && npx wrangler secret put AGENT_TOKEN < ~/.config/chimera/agent-token
+```
+
+### 6. Containers and Claude
+
+On the computer, give containers their logins and build the base container. "Giving containers your Claude and GitHub logins" below says which tokens to make:
+
+```
+ssh chimera
+claude setup-token
+chimera secret claude
+chimera secret github
+chimera base
+```
+
+To let Claude Code on the laptop drive chimera, follow "Letting Claude manage containers" below. From the phone, open the dashboard at the Worker's address, or make the "New task" Shortcut.
+
+Check it all works with `node control/worker.test.mjs` and, while the computer is awake, the scripts in `test/`.
+
+## Using it
 
 The rest of this file is the manual. You reach the computer as `andre@chimera` over Tailscale. Files in `/home` survive sleep. Everything else is rebuilt on wake.
 
