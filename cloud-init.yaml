@@ -547,9 +547,9 @@ write_files:
     gh repo clone raramos9/ack ~/ack -- -q
     rm ~/.claude/settings.json
     ~/ack/install.sh >/dev/null
-    claude plugin marketplace add anthropics/claude-plugins-official >/dev/null
+    claude plugin marketplace add anthropics/claude-plugins-official >/dev/null || echo "chimera: couldn't add the official plugin marketplace, so containers won't have its plugins." >&2
     jq -r '.extraKnownMarketplaces // {} | .[].source.repo // empty' ~/.claude/settings.json | while read -r repo; do
-      claude plugin marketplace add "$repo" </dev/null >/dev/null
+      claude plugin marketplace add "$repo" </dev/null >/dev/null || echo "chimera: couldn't add the $repo plugin marketplace, so containers won't have its plugins." >&2
     done
     jq -r '.enabledPlugins // {} | to_entries[] | select(.value) | .key' ~/.claude/settings.json | while read -r plugin; do
       claude plugin install "$plugin" </dev/null >/dev/null || echo "chimera: couldn't install the $plugin plugin, so containers won't have it." >&2
