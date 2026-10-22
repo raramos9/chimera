@@ -5,7 +5,7 @@ chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@" </dev/null; }
 
 "$chimera" sleep
 "$chimera" wake
@@ -29,7 +29,7 @@ for _ in $(seq 20); do c shell m-test test -e args && break; sleep 0.5; done
 [ "$(c shell m-test cat args)" = "a b|it's|\$HOME|" ] || fail "run didn't pass its arguments through unchanged"
 ! c shell m-test-fork test -e args || fail "a file made in m-test showed up in its fork"
 
-[ "$(c shell m-test whoami)" = andre ] || fail "shell isn't andre inside the container"
+[ "$(c shell m-test whoami)" = dev ] || fail "shell isn't dev inside the container"
 c shell m-test claude --version >/dev/null || fail "Claude Code isn't installed in the container"
 c shell m-test gh --version >/dev/null || fail "gh isn't installed in the container"
 c shell m-test test -e .claude/skills/poteto-mode/SKILL.md || fail "the container doesn't have the skills from raramos9/ack"

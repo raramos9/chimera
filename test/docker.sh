@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@"; }
 
 wake_until_docker() {
   local start=$(date +%s)
@@ -13,7 +13,7 @@ wake_until_docker() {
     remote docker info >/dev/null 2>&1 && break
     sleep 3
   done
-  remote docker info >/dev/null || fail "docker didn't answer for andre within 3 minutes of SSH coming up"
+  remote docker info >/dev/null || fail "docker didn't answer for dev within 3 minutes of SSH coming up"
   docker_seconds=$(( $(date +%s) - start ))
 }
 

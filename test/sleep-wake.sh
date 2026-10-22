@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes dev@chimera "$@"; }
 host_key() { ssh-keyscan -t ed25519 "$1" 2>/dev/null | awk '!/^#/ { print $2, $3 }'; }
 
 "$chimera" wake

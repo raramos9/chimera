@@ -1,7 +1,7 @@
 #cloud-config
 
 users:
-- name: andre
+- name: dev
   uid: 1000
   shell: /bin/bash
   groups: [sudo, docker, incus-admin]
@@ -40,6 +40,17 @@ bootcmd:
 
   mountpoint -q /home || mount "$home" /home
   resize2fs "$home" || echo "chimera: couldn't grow /home to the volume size" >&2
+  # The user was called andre before it became dev. Same uid, so the files need no chown.
+  if [ -d /home/andre ] && [ ! -e /home/dev ]; then
+    mv /home/andre /home/dev
+    find /home/dev -xdev -type l -lname '/home/andre/*' | while read -r link; do
+      target=$(readlink "$link")
+      ln -sfn "/home/dev/${target#/home/andre/}" "$link"
+    done
+    for d in /home/dev/.claude/projects/-home-andre*; do
+      if [ -d "$d" ]; then mv "$d" "/home/dev/.claude/projects/-home-dev${d#/home/dev/.claude/projects/-home-andre}"; fi
+    done
+  fi
 
   rm -f /etc/ssh/ssh_host_*
   if [ -d "$keys" ]; then cp -p "$keys"/ssh_host_* /etc/ssh/; fi
@@ -120,7 +131,7 @@ write_files:
     #!/bin/bash
     set -euo pipefail
 
-    secrets=/home/andre/.config/chimera/secrets
+    secrets=/home/dev/.config/chimera/secrets
     setup=/usr/local/share/chimera/base-setup.sh
     stack=/usr/local/share/chimera/stack-setup.sh
     report=/usr/local/share/chimera/report.py
@@ -145,14 +156,14 @@ write_files:
     repo_dir() {
       local repo
       repo=$(incus config get "$1" user.chimera.repo)
-      if [ -n "$repo" ]; then echo "/home/andre/${repo#*/}"; else echo /home/andre; fi
+      if [ -n "$repo" ]; then echo "/home/dev/${repo#*/}"; else echo /home/dev; fi
     }
 
     git_in() {
       local name=$1 dir
       shift
       dir=$(repo_dir "$name")
-      incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec git "$@"' bash "$dir" "$@"
+      incus exec "$name" -- sudo -u dev -H bash -lc 'cd "$1" && shift && exec git "$@"' bash "$dir" "$@"
     }
 
     lost_work() {
@@ -189,7 +200,7 @@ write_files:
       exists base || die "there's no base container yet. Build it with 'chimera base'."
       copy base "$name" "$task"
       if [ -n "$repo" ]; then
-        if ! incus exec "$name" -- sudo -u andre -H bash -lc 'gh repo clone "$1" "$2" -- -q && git -C "$2" switch -q -c "$3"' bash "$repo" "/home/andre/${repo#*/}" "chimera/$name"; then
+        if ! incus exec "$name" -- sudo -u dev -H bash -lc 'gh repo clone "$1" "$2" -- -q && git -C "$2" switch -q -c "$3"' bash "$repo" "/home/dev/${repo#*/}" "chimera/$name"; then
           incus delete -f "$name"
           die "couldn't clone $repo, so $name was deleted. Check the name and that your GitHub token can read it."
         fi
@@ -220,7 +231,7 @@ write_files:
       dir=$(mktemp -d)
       trap "rm -rf '$dir'" EXIT
       if ! flock -n -x /var/lib/chimera-awake/awake.lock true; then busy=true; fi
-      if [ -e /home/andre/.keep-awake ] || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null; then people=true; fi
+      if [ -e /home/dev/.keep-awake ] || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null; then people=true; fi
       for ttyd in $(pgrep -x ttyd || true); do
         if pgrep -P "$ttyd" >/dev/null; then people=true; fi
       done
@@ -232,7 +243,7 @@ write_files:
         printf '%s' "$lost_unpushed" > "$dir/$name.unpushed"
         printf '%s' "$lost_dirty" > "$dir/$name.uncommitted"
         echo "$rc" > "$dir/$name.rc"
-        incus exec "$name" -- sh -c 'pgrep -x claude >/dev/null || exit 0; cat /home/andre/.config/chimera/agent 2>/dev/null || echo waiting' \
+        incus exec "$name" -- sh -c 'pgrep -x claude >/dev/null || exit 0; cat /home/dev/.config/chimera/agent 2>/dev/null || echo waiting' \
           </dev/null > "$dir/$name.agent" 2>/dev/null || true
       done
       python3 "$report" build "$dir" "$busy" "$people" <<<"$json"
@@ -295,14 +306,14 @@ write_files:
       local name=$1 window=$2 script
       shift 2
       script=/tmp/chimera-run-$(date +%s%N).sh
-      { printf 'cd %q\n' "$(repo_dir "$name")"; printf '%q ' "$@"; } | incus exec "$name" -- sudo -u andre sh -c "cat > $script"
-      incus exec "$name" -- sudo -iu andre sh -c \
+      { printf 'cd %q\n' "$(repo_dir "$name")"; printf '%q ' "$@"; } | incus exec "$name" -- sudo -u dev sh -c "cat > $script"
+      incus exec "$name" -- sudo -iu dev sh -c \
         "tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main -n $window 'bash -l $script; exec bash -l'"
     }
 
     start_agent() {
       local name=$1 task=$2
-      incus exec "$name" -- sudo -u andre -H sh -c \
+      incus exec "$name" -- sudo -u dev -H sh -c \
         'jq --arg d "$1" ".projects[\$d].hasTrustDialogAccepted = true" ~/.claude.json > ~/.claude.json.new && mv ~/.claude.json.new ~/.claude.json' \
         sh "$(repo_dir "$name")"
       in_tmux "$name" claude claude --dangerously-skip-permissions "$task
@@ -319,9 +330,9 @@ write_files:
       ready "$name"
       dir=$(repo_dir "$name")
       if [ $# -eq 0 ]; then
-        exec incus exec "$name" -- sudo -iu andre tmux new-session -A -s main -c "$dir"
+        exec incus exec "$name" -- sudo -iu dev tmux new-session -A -s main -c "$dir"
       fi
-      exec incus exec "$name" -- sudo -u andre -H bash -lc 'cd "$1" && shift && exec "$@"' bash "$dir" "$@"
+      exec incus exec "$name" -- sudo -u dev -H bash -lc 'cd "$1" && shift && exec "$@"' bash "$dir" "$@"
     }
 
     do_rm() {
@@ -476,9 +487,9 @@ write_files:
       incus file push --mode 0755 /usr/local/bin/awake /usr/local/bin/chimera-agent-busy base-new/usr/local/bin/
       incus file push -p /etc/claude-code/managed-settings.json base-new/etc/claude-code/managed-settings.json
       { secret_env claude CLAUDE_CODE_OAUTH_TOKEN; secret_env github GH_TOKEN; } \
-        | incus exec base-new -- sh -c 'umask 077 && cat > /home/andre/.config/chimera/env && chown andre:andre /home/andre/.config/chimera/env'
+        | incus exec base-new -- sh -c 'umask 077 && cat > /home/dev/.config/chimera/env && chown dev:dev /home/dev/.config/chimera/env'
       incus file push "$stack" base-new/tmp/stack-setup.sh
-      incus exec base-new -- sudo -iu andre bash /tmp/stack-setup.sh </dev/null
+      incus exec base-new -- sudo -iu dev bash /tmp/stack-setup.sh </dev/null
       incus stop base-new
       incus delete -f base >/dev/null 2>&1 || true
       incus move base-new base
@@ -496,9 +507,9 @@ write_files:
     set -euo pipefail
     export DEBIAN_FRONTEND=noninteractive
 
-    usermod -l andre -d /home/andre -m ubuntu
-    groupmod -n andre ubuntu
-    sed -i 's/^ubuntu /andre /' /etc/sudoers.d/*
+    usermod -l dev -d /home/dev -m ubuntu
+    groupmod -n dev ubuntu
+    sed -i 's/^ubuntu /dev /' /etc/sudoers.d/*
 
     install -d -m 755 /etc/apt/keyrings
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli.gpg
@@ -506,9 +517,9 @@ write_files:
     apt-get update -q
     apt-get install -yq git tmux curl ca-certificates jq ripgrep build-essential docker.io gh unzip
     apt-get clean
-    usermod -aG docker andre
+    usermod -aG docker dev
 
-    sudo -iu andre bash <<'EOF'
+    sudo -iu dev bash <<'EOF'
     set -euo pipefail
     curl -fsSL https://claude.ai/install.sh | bash
     merge() { [ -e "$1" ] || echo '{}' > "$1"; jq "$2" "$1" > "$1.new" && mv "$1.new" "$1"; }
@@ -753,7 +764,7 @@ write_files:
     fi
     flags=()
     [[ ${2-} == view ]] && flags=(-f read-only,ignore-size)
-    incus exec "$name" -- sudo -iu andre tmux attach "${flags[@]}" -t main:claude || { echo "Claude isn't running in $name."; sleep 5; }
+    incus exec "$name" -- sudo -iu dev tmux attach "${flags[@]}" -t main:claude || { echo "Claude isn't running in $name."; sleep 5; }
 - path: /etc/systemd/system/chimera-watch.service
   content: |
     [Unit]
@@ -762,7 +773,7 @@ write_files:
     After=incus.service
 
     [Service]
-    User=andre
+    User=dev
     ExecStart=/usr/bin/ttyd -i lo -p 7681 --writable --url-arg --check-origin -t disableResizeOverlay=true -t 'theme={"background":"#09090b","foreground":"#d4d4d8","cursor":"#d4d4d8"}' /usr/local/bin/chimera-watch
     Restart=always
     RestartSec=5
@@ -779,7 +790,7 @@ write_files:
     minutes=30
     if [ -e "$dir/minutes" ]; then minutes=$(cat "$dir/minutes"); fi
     busy() {
-      [ -e /home/andre/.keep-awake ] \
+      [ -e /home/dev/.keep-awake ] \
         || pgrep -f '^sshd(-session)?: [^ ]+@' >/dev/null \
         || ! flock -n -x /var/lib/chimera-awake/awake.lock true
     }

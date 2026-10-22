@@ -40,13 +40,13 @@ Change these to your own values:
 
 | File | What to change |
 | --- | --- |
-| `cloud-init.yaml` | The user `andre`, your SSH public keys at the top, the git email, and the three Worker addresses (`chimera-control.ralphandrer04.workers.dev`) |
+| `cloud-init.yaml` | The user `dev`, your SSH public keys at the top, the git email, and the three Worker addresses (`chimera-control.ralphandrer04.workers.dev`) |
 | `bin/chimera` | `user` and, if you want another Hetzner region, `location` |
 | `control/worker.js` | `location`, and `primaryIpId` and `firewallId` once step 2 gives you them |
 | `control/dashboard.html` | `watchBase`, your tailnet name in place of `tailed8053.ts.net` |
 | `cloud-init.yaml`, in `stack-setup.sh` | The `raramos9/ack` repo that gives containers a Claude Code setup. Point it at your own or remove that step |
 
-The scripts in `test/` also log in as `andre@chimera`. Search the repo for `andre` to find every spot.
+The scripts in `test/` also log in as `dev@chimera`. Search the repo for `dev` to find every spot.
 
 ### 2. Hetzner
 
@@ -107,7 +107,7 @@ The first wake can't reach Tailscale yet, so open public SSH for a few minutes, 
 
 ```
 hcloud firewall remove-from-resource chimera-firewall --type server --server chimera
-ssh andre@$(hcloud server ip chimera) sudo tailscale up
+ssh dev@$(hcloud server ip chimera) sudo tailscale up
 hcloud firewall apply-to-resource chimera-firewall --type server --server chimera
 ```
 
@@ -137,7 +137,7 @@ Check it all works with `node control/worker.test.mjs` and, while the computer i
 
 ## Using it
 
-The rest of this file is the manual. You reach the computer as `andre@chimera` over Tailscale. Files in `/home` survive sleep. Everything else is rebuilt on wake.
+The rest of this file is the manual. You reach the computer as `dev@chimera` over Tailscale. Files in `/home` survive sleep. Everything else is rebuilt on wake.
 
 ## Waking by connecting
 
@@ -145,7 +145,7 @@ On the laptop, `ssh chimera` wakes the computer if it's asleep, waits about 30 s
 
 ```
 Host chimera
-  User andre
+  User dev
   ProxyCommand ~/Projects/active/chimera/bin/chimera connect
 ```
 
@@ -190,7 +190,7 @@ The computer stays on while Claude is working, including background tasks it sta
 
 `awake` is for other long commands, like `awake npm test`. While the command runs, the computer stays on even with nobody connected. When it ends, or crashes, the countdown starts. Use it too for something Claude starts that should keep running after Claude is done, like `awake npm run dev`. Anything else left running in the background doesn't keep the computer on. The Worker shuts down anything awake for 24 hours either way.
 
-The agent runs as `andre`, who has full admin rights. Backups (below) are the safety net.
+The agent runs as `dev`, who has full admin rights. Backups (below) are the safety net.
 
 ## Containers
 
@@ -224,7 +224,7 @@ A request that fails, like a `new` whose repo can't be cloned, stays in place wi
 
 On the computer itself, the same five commands go through the Worker the same way, using the computer's own password.
 
-Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `andre`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use all of the computer's memory except 512 MB, and never less than 1.5 GB, so containers get more on a bigger computer. The limit is set again on every boot.
+Every container starts as a copy of one called `base`, which already has Claude Code, Git, GitHub's `gh`, Docker and build tools, with you as `dev`. A copy takes about a second and shares disk space with the original until either one changes. Each container can use all of the computer's memory except 512 MB, and never less than 1.5 GB, so containers get more on a bigger computer. The limit is set again on every boot.
 
 `run` starts the command in a new tmux window inside the container and returns right away, so you can disconnect. `chimera shell NAME` attaches to that tmux. From inside the computer's own tmux, press Ctrl-b twice to reach the inner one. The computer stays on while a `run` command is going, even with nobody connected, and the usual 30-minute countdown starts when it ends. Inside a container, Claude and `awake` keep the computer on the same way they do outside one. The Worker still shuts everything down after 24 hours.
 
@@ -366,10 +366,10 @@ On the computer:
 
 ```
 sudo chimera-restic snapshots
-sudo chimera-restic restore latest --include /home/andre/projects/website --target /tmp/restore
-sudo cat /tmp/restore/home/andre/projects/website/index.html
-sudo mv /tmp/restore/home/andre/projects/website ~/projects/
-sudo chown -R andre:andre ~/projects/website
+sudo chimera-restic restore latest --include /home/dev/projects/website --target /tmp/restore
+sudo cat /tmp/restore/home/dev/projects/website/index.html
+sudo mv /tmp/restore/home/dev/projects/website ~/projects/
+sudo chown -R dev:dev ~/projects/website
 sudo rm -rf /tmp/restore
 ```
 

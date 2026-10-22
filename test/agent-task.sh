@@ -7,9 +7,9 @@ name=c-agent
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@" </dev/null; }
 drop_branch() { gh api -X DELETE "repos/$repo/git/refs/heads/chimera/$name" >/dev/null 2>&1 || true; }
-agent_file() { remote "incus exec $name -- cat /home/andre/.config/chimera/agent" 2>/dev/null || true; }
+agent_file() { remote "incus exec $name -- cat /home/dev/.config/chimera/agent" 2>/dev/null || true; }
 reported_agent() { remote "chimera report" | jq -r --arg n "$name" '.workspaces[] | select(.name == $n) | .agent // "none"'; }
 pushed_hello() { gh api "repos/$repo/contents/HELLO.md?ref=chimera/$name" --jq .content 2>/dev/null | base64 -d 2>/dev/null; }
 
@@ -24,7 +24,7 @@ cleanup
 
 out=$(c new "$name" "Add a file HELLO.md containing the single word hello." --repo "$repo")
 grep -q "$name is ready" <<<"$out" || fail "new didn't report success: $out"
-remote "incus exec $name -- sudo -iu andre tmux list-windows -t main -F '#W'" | grep -qx claude \
+remote "incus exec $name -- sudo -iu dev tmux list-windows -t main -F '#W'" | grep -qx claude \
   || fail "there's no tmux window called claude in $name, so Claude wasn't started"
 echo "PASS: new with a task and repo opened Claude in a tmux window"
 

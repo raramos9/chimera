@@ -6,7 +6,7 @@ site=https://chimera.tailed8053.ts.net:8443
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 -o ProxyCommand=none dev@chimera "$@" </dev/null; }
 
 # Usage: [COLS=N] [SECONDS_OPEN=N] [PREFS=1] terminal ARG ORIGIN TYPED. Prints what the Watch page's terminal shows within 2+SECONDS_OPEN seconds (default 6), plus its settings with PREFS=1, or "refused CODE".
 terminal() {
@@ -51,14 +51,14 @@ remote "ss -ltnH 'sport = 7681'" | grep -q '127.0.0.1:7681' || fail "ttyd isn't 
 
 c rm c-watch --yes >/dev/null 2>&1 || true
 c new c-watch >/dev/null
-remote "incus exec c-watch -- sudo -iu andre sh -c 'tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main -n claude bash -l'"
+remote "incus exec c-watch -- sudo -iu dev sh -c 'tmux has-session -t main 2>/dev/null || tmux new-session -d -s main; tmux new-window -t main -n claude bash -l'"
 
 a=$((RANDOM % 900 + 100)) b=$((RANDOM % 900 + 100))
 answer=$((a * b))
 [ "$(curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' "$site/")" = 200 ] || fail "$site/ didn't load"
 terminal c-watch "$site" "echo \$(($a*$b))watched" | grep -q "${answer}watched" \
   || fail "typing into the Watch page didn't run in c-watch's claude window"
-width() { remote "incus exec c-watch -- sudo -iu andre tmux display -p -t main:claude '#{window_width}'"; }
+width() { remote "incus exec c-watch -- sudo -iu dev tmux display -p -t main:claude '#{window_width}'"; }
 COLS=100 SECONDS_OPEN=16 terminal c-watch "$site" "" >/dev/null &
 watcher=$!
 sleep 5
@@ -66,7 +66,7 @@ before=$(width)
 [ "$before" = 100 ] || fail "the full Watch page didn't size c-watch's claude window to 100 columns, got $before"
 COLS=60 terminal "c-watch&arg=view" "$site" "echo viewonly\$((1+1))" | grep -q "${answer}watched" \
   || fail "the preview didn't show c-watch's claude window"
-! remote "incus exec c-watch -- sudo -iu andre tmux capture-pane -p -t main:claude" | grep -q viewonly \
+! remote "incus exec c-watch -- sudo -iu dev tmux capture-pane -p -t main:claude" | grep -q viewonly \
   || fail "typing into the preview reached c-watch's claude window"
 [ "$(width)" = "$before" ] || fail "the preview resized c-watch's claude window from $before to $(width) columns"
 wait "$watcher"

@@ -7,7 +7,7 @@ limit=10
 force_after=$((limit + 15))
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes dev@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 deploy() { (cd "$root/control" && npx wrangler deploy "$@" >/dev/null); }
 
@@ -39,7 +39,7 @@ while [ $(( $(date +%s) - woke )) -lt $((force_after * 60)) ]; do
     [ "$("$chimera" status | head -1)" = asleep ] || fail "computer is not asleep"
     hcloud volume describe chimera-home >/dev/null || fail "volume was deleted"
     "$chimera" wake
-    [ "$(remote "sudo chimera-restic dump latest /home/andre/backup-test")" = "$token" ] \
+    [ "$(remote "sudo chimera-restic dump latest /home/dev/backup-test")" = "$token" ] \
       || fail "the backup before the Worker's shutdown didn't include the newest file"
     remote "rm backup-test"
     "$chimera" sleep

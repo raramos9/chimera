@@ -5,7 +5,7 @@ chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@" </dev/null; }
 fetch() { curl -fsS --max-time 5 "$1" 2>/dev/null; }
 resolves() {
   if command -v dscacheutil >/dev/null; then dscacheutil -q host -a name "$1" | grep -q ip_address

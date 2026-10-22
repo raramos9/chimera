@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o StrictHostKeyChecking=yes dev@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 
 woke=

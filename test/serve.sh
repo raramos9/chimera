@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@"; }
 fetch() { curl -fsS --max-time 5 "$1" 2>/dev/null; }
 https_url="https://$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "chimera") | .DNSName | rtrimstr(".")')/"
 

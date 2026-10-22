@@ -6,7 +6,7 @@ repo=raramos9/chimera-test
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@" </dev/null; }
 drop_branch() { gh api -X DELETE "repos/$repo/git/refs/heads/chimera/$1" >/dev/null 2>&1 || true; }
 
 cleanup() {
@@ -31,7 +31,7 @@ c new c-res "results test" --repo "$repo" >/dev/null
 listing=$(remote "chimera ls -f csv")
 grep -q "^c-res,RUNNING,base,results test,$repo,chimera/c-res," <<<"$listing" || fail "ls doesn't show c-res with its repo and branch: $listing"
 
-[ "$(c shell c-res pwd)" = /home/andre/chimera-test ] || fail "shell doesn't start in the repo checkout"
+[ "$(c shell c-res pwd)" = /home/dev/chimera-test ] || fail "shell doesn't start in the repo checkout"
 [ "$(c shell c-res git branch --show-current)" = chimera/c-res ] || fail "new didn't put c-res on its own branch"
 
 out=$(c results c-res)

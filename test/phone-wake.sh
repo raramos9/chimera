@@ -32,7 +32,7 @@ wake "$token"
 
 answered=
 for _ in $(seq 36); do
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera true 2>/dev/null; then answered=1; break; fi
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera true 2>/dev/null; then answered=1; break; fi
   sleep 5
 done
 [ -n "$answered" ] || fail "SSH over Tailscale didn't answer within 3 minutes of waking"

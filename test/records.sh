@@ -7,7 +7,7 @@ repo=raramos9/chimera-test
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 c() { "$chimera" "$@" </dev/null; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@" </dev/null; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 drop_branch() { gh api -X DELETE "repos/$repo/git/refs/heads/chimera/$1" >/dev/null 2>&1 || true; }
 state() {

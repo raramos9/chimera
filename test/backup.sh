@@ -4,9 +4,9 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
-latest_file() { remote "sudo chimera-restic dump latest /home/andre/backup-test"; }
+latest_file() { remote "sudo chimera-restic dump latest /home/dev/backup-test"; }
 
 "$chimera" sleep
 "$chimera" wake
@@ -19,8 +19,8 @@ token="backup-$(date +%s)-$RANDOM"
 remote "echo $token > backup-test"
 remote "sudo chimera-backup" >/dev/null
 remote "rm backup-test"
-remote "sudo rm -rf /tmp/restore && sudo chimera-restic restore latest --include /home/andre/backup-test --target /tmp/restore" >/dev/null
-[ "$(remote "sudo cat /tmp/restore/home/andre/backup-test")" = "$token" ] || fail "restored file doesn't match what was backed up"
+remote "sudo rm -rf /tmp/restore && sudo chimera-restic restore latest --include /home/dev/backup-test --target /tmp/restore" >/dev/null
+[ "$(remote "sudo cat /tmp/restore/home/dev/backup-test")" = "$token" ] || fail "restored file doesn't match what was backed up"
 
 snapshot=$(remote "sudo chimera-restic snapshots --latest 1 --json" | jq -r '.[0].id')
 remote "sudo chimera-restic forget $snapshot" >/dev/null 2>&1 || true

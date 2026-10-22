@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@"; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@"; }
 provider_status() { hcloud server list -o json | jq -r '(. // [])[] | select(.name == "chimera") | .status'; }
 
 wake_with_short_timeout() {

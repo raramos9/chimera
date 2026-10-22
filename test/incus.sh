@@ -4,7 +4,7 @@ set -euo pipefail
 chimera="$(dirname "$0")/../bin/chimera"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 andre@chimera "$@" </dev/null; }
+remote() { ssh -o BatchMode=yes -o ConnectTimeout=5 dev@chimera "$@" </dev/null; }
 state() { remote "incus info $1" | awk '/^Status:/{print $2}'; }
 online() { remote "incus exec $1 -- timeout 5 bash -c '</dev/tcp/1.1.1.1/443'" 2>/dev/null; }
 
@@ -15,7 +15,7 @@ wake_until_incus() {
     remote incus storage show default >/dev/null 2>&1 && break
     sleep 3
   done
-  remote incus storage show default >/dev/null || fail "incus didn't answer for andre within 3 minutes of SSH coming up"
+  remote incus storage show default >/dev/null || fail "incus didn't answer for dev within 3 minutes of SSH coming up"
   incus_seconds=$(( $(date +%s) - start ))
 }
 
