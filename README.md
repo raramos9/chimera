@@ -1,8 +1,32 @@
 # Chimera
 
-A personal Linux computer in the cloud. It sleeps when nobody is using it and wakes from the laptop (`bin/chimera wake`) or the phone (the "Wake Chimera" Shortcut). Files in `/home` survive sleep. Everything else is rebuilt on wake by `cloud-init.yaml`.
+A cloud computer that only exists while it's working. A Cloudflare Worker creates it on Hetzner when something needs it and deletes it once it goes idle, so it costs cents a day instead of a monthly server bill. On it, Claude Code agents each work in their own container on a GitHub branch. Claude itself can start them, check on them, read their results and put the computer back to sleep, all within a daily budget.
 
-You reach it as `andre@chimera` over Tailscale. The public internet can't reach it at all.
+```mermaid
+flowchart LR
+  laptop[Laptop<br/>bin/chimera, ssh] --> worker
+  phone[Phone<br/>Shortcut, dashboard] --> worker
+  claude[Claude Code<br/>over MCP] --> worker
+  worker[Cloudflare Worker<br/>wake, sleep, orders, budget] -- Hetzner API --> server
+  server[Hetzner server<br/>made on wake, deleted on sleep] --> containers[Incus containers<br/>one Claude agent each]
+  server -- reports every 2 minutes --> worker
+  server -- hourly backups --> r2[(Cloudflare R2)]
+  laptop -. Tailscale .-> server
+```
+
+What it does:
+
+- **Sleeps by being deleted.** A powered-off Hetzner server still bills, so sleep backs up `/home`, powers off, and the Worker deletes the server. Files live on Hetzner volumes that outlast it, and each wake rebuilds the rest from `cloud-init.yaml` and a saved image in about 30 seconds.
+- **Wakes from anywhere.** `ssh chimera` on the laptop, a Shortcut on the phone, the Worker's dashboard, or Claude.
+- **Runs agents in parallel.** Each task gets an Incus container cloned from a base with Claude Code, git, gh and Docker. The agent works on `chimera/NAME`, commits and pushes. Containers can be forked, uncommitted work included, to try two approaches side by side.
+- **Lets Claude drive it.** The Worker speaks MCP with its own key. Claude can run up to 3 containers, pick a bigger computer when it gives a reason, and spend up to $2 a day. Deletes are refused while work is unpushed, and sleep is refused while anyone is logged in.
+- **Keeps itself safe.** No public ports, only Tailscale. Hourly backups go to an R2 bucket that nothing on the computer can delete. Every caller (laptop and phone, the computer, Claude) has a separate token, and the Worker sleeps anything awake for 24 hours.
+
+Built with Cloudflare Workers and Durable Objects, Hetzner Cloud, cloud-init, Incus, Tailscale, restic and the Model Context Protocol. The Worker is plain JavaScript with no dependencies, tested by `node control/worker.test.mjs`. The scripts in `test/` check each feature against the real computer.
+
+## Running it yourself
+
+The rest of this file is the manual. You reach the computer as `andre@chimera` over Tailscale. Files in `/home` survive sleep. Everything else is rebuilt on wake.
 
 ## Waking by connecting
 
