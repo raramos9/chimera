@@ -26,7 +26,7 @@ Built with Cloudflare Workers and Durable Objects, Hetzner Cloud, cloud-init, In
 
 ## Setting it up yourself
 
-Chimera is built for one person, so a few names are written into the code. Plan on an hour or two the first time.
+Chimera is built for one person, so a few of your own details are written into the code. Plan on an hour or two the first time.
 
 ### What you need
 
@@ -40,13 +40,13 @@ Change these to your own values:
 
 | File | What to change |
 | --- | --- |
-| `cloud-init.yaml` | The user `dev`, your SSH public keys at the top, the git email, and the three Worker addresses (`chimera-control.ralphandrer04.workers.dev`) |
-| `bin/chimera` | `user` and, if you want another Hetzner region, `location` |
+| `cloud-init.yaml` | Your SSH public keys at the top, the git name and email agents commit with, and the three Worker addresses (`chimera-control.ralphandrer04.workers.dev`) |
+| `bin/chimera` | `location`, if you want another Hetzner region |
 | `control/worker.js` | `location`, and `primaryIpId` and `firewallId` once step 2 gives you them |
 | `control/dashboard.html` | `watchBase`, your tailnet name in place of `tailed8053.ts.net` |
 | `cloud-init.yaml`, in `stack-setup.sh` | The `raramos9/ack` repo that gives containers a Claude Code setup. Point it at your own or remove that step |
 
-The scripts in `test/` also log in as `dev@chimera`. Search the repo for `dev` to find every spot.
+The account on the computer is called `dev`, so you log in as `dev@chimera`. Keep it, or rename it in `cloud-init.yaml`, `user` in `bin/chimera`, and the `ssh` lines in `test/`.
 
 ### 2. Hetzner
 
@@ -373,7 +373,7 @@ sudo chown -R dev:dev ~/projects/website
 sudo rm -rf /tmp/restore
 ```
 
-The first command lists every backup with its time. Put a backup's ID in place of `latest` to restore from an earlier one. Restores go to `/tmp/restore` first, so nothing in your home folder is overwritten. That folder is admin-only, which is why looking inside needs `sudo`.
+The first command lists every backup with its time. Put a backup's ID in place of `latest` to restore from an earlier one. Backups from before October 22, 2026 keep home files under `/home/andre`, the account's old name. Restores go to `/tmp/restore` first, so nothing in your home folder is overwritten. That folder is admin-only, which is why looking inside needs `sudo`.
 
 ### Setting it up again
 
