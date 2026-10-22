@@ -40,12 +40,16 @@ bootcmd:
 
   mountpoint -q /home || mount "$home" /home
   resize2fs "$home" || echo "chimera: couldn't grow /home to the volume size" >&2
-  # The user was called andre before it became dev. Same uid, so the files need no chown.
+  # The user was called andre before it became dev. Same uid, so the moved files keep their owner.
   if [ -d /home/andre ] && [ ! -e /home/dev ]; then
     mv /home/andre /home/dev
     find /home/dev -xdev -type l -lname '/home/andre/*' | while read -r link; do
       target=$(readlink "$link")
       ln -sfn "/home/dev/${target#/home/andre/}" "$link"
+      chown -h 1000:1000 "$link"
+    done
+    for f in /home/dev/.claude.json /home/dev/.local/share/applications/claude-code-url-handler.desktop; do
+      if [ -f "$f" ]; then sed -i 's#/home/andre\([/"]\)#/home/dev\1#g' "$f"; fi
     done
     for d in /home/dev/.claude/projects/-home-andre*; do
       if [ -d "$d" ]; then mv "$d" "/home/dev/.claude/projects/-home-dev${d#/home/dev/.claude/projects/-home-andre}"; fi
